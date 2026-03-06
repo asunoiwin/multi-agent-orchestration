@@ -1,0 +1,115 @@
+{
+  "generated_at": "2026-03-06T09:43:08.634Z",
+  "roles": {
+    "supervisor": {
+      "role": "supervisor",
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "persistent",
+      "tools": [
+        "sessions_list",
+        "sessions_history",
+        "subagents",
+        "sessions_send",
+        "read",
+        "write"
+      ],
+      "maxConcurrent": 1,
+      "description": "监督员：任务分析、Agent 创建/回收、进度监控、质量评估",
+      "permissions": {
+        "allow": [
+          "sessions_list",
+          "sessions_history",
+          "subagents",
+          "sessions_send",
+          "read",
+          "write"
+        ],
+        "deny": [
+          "gateway.*",
+          "cron.*",
+          "plugins.*",
+          "exec"
+        ]
+      }
+    },
+    "researcher": {
+      "role": "researcher",
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "semi-persistent",
+      "tools": [
+        "read",
+        "web_search",
+        "web_fetch"
+      ],
+      "maxConcurrent": 2,
+      "description": "研究员：信息收集、技术调研、方案分析",
+      "permissions": {
+        "allow": [
+          "read",
+          "web_search",
+          "web_fetch"
+        ],
+        "deny": [
+          "gateway.*",
+          "cron.*",
+          "plugins.*",
+          "write",
+          "edit",
+          "sessions_spawn"
+        ]
+      }
+    },
+    "builder": {
+      "role": "builder",
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "semi-persistent",
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "exec"
+      ],
+      "maxConcurrent": 1,
+      "description": "构建者：代码编写、文件修改、功能实现",
+      "permissions": {
+        "allow": [
+          "read",
+          "write",
+          "edit",
+          "exec"
+        ],
+        "deny": [
+          "gateway.*",
+          "cron.*",
+          "plugins.*",
+          "sessions_spawn"
+        ]
+      }
+    },
+    "auditor": {
+      "role": "auditor",
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "temporary",
+      "tools": [
+        "read",
+        "exec"
+      ],
+      "maxConcurrent": 1,
+      "description": "审计员：代码审查、安全检查、质量验证",
+      "permissions": {
+        "allow": [
+          "read",
+          "exec"
+        ],
+        "deny": [
+          "gateway.*",
+          "cron.*",
+          "plugins.*",
+          "write",
+          "edit",
+          "sessions_spawn"
+        ]
+      }
+    }
+  }
+}

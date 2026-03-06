@@ -1,0 +1,62 @@
+# 员工花名册 / Agents Registry
+
+## 角色定义
+
+| 角色 | 职责 | 工具权限 | 状态 |
+|------|------|----------|------|
+| Product-Manager | 需求分析、任务拆解、优先级排序 | 读文件、读日志、任务系统 | 待分配 |
+| Dev-Engineer | 代码/配置修改、脚本编写 | 读/写文件、exec、edit | 待分配 |
+| QA-Engineer | 自检设计、验收测试、错误验证 | 读文件、exec、日志分析 | 待分配 |
+| Ops-Engineer | 部署、监控、日志分析，回滚 | exec、gateway控制、进程管理 | 待分配 |
+
+## 多Agent角色（当前使用）
+
+| Agent ID | 角色 | 权限 | 说明 |
+|----------|------|------|------|
+| main | 经理 | 全部 | 统筹协调，任务分发 |
+| researcher | 研究员 | read, exec, web_fetch, memory | 信息收集与分析 |
+| builder | 开发者 | read, write, edit, exec | 代码编写与实现 |
+| auditor | 审计员 | read, exec | 代码审查与安全检查 |
+
+## 任务分发规则
+
+### 关键词映射
+```
+→ researcher: 搜索, 调研, 分析, 研究, 对比, 查找, 了解, 收集
+→ builder: 开发, 编写, 实现, 写代码, 创建, 制作, 修改, 构建
+→ auditor: 检查, 审查, 验证, 测试, 审计, 评估, 排查
+```
+
+### 并行策略
+- **自动并行**：任务含"同时/分别/并行"或多个无依赖子任务
+- **串行执行**：任务含"先/然后/基于/根据"或明确依赖
+- **复合任务**：main拆解后并行分发子任务
+
+### 协作模式
+1. **完全并行**：多个独立任务同时执行
+2. **流水线**：researcher→builder→auditor 顺序依赖
+3. **探索-执行**：多方案探索 → main决策 → builder实现 → auditor验证
+
+## 任务分配
+
+| 任务ID | 任务名称 | 负责角色 | 状态 |
+|--------|----------|----------|------|
+| T1 | 修复 openclaw.json 结构错误 | Dev-Engineer | ✅ 已完成 |
+| T2 | 主模型切换 | Dev-Engineer | ✅ 已完成 |
+| T3 | self-improvement HOOK 验证 | QA-Engineer | ✅ 已完成 |
+| T4 | SKILL 配置错误排查 | QA-Engineer | ✅ 已完成 |
+| T5 | elite-longterm-memory 架构 | Product-Manager | ✅ 已完成 |
+| T6 | 员工体系/多 agent 协作 | Product-Manager | ✅ 已完成 |
+| T7 | 优化自动继续任务流程 | Dev-Engineer | ✅ 已完成（Skill已更新） |
+| T8 | 多Agent并行协作系统 | Product-Manager | ✅ 已完成 |
+
+## Cron 任务
+
+| 名称 | 间隔 | 状态 |
+|------|------|------|
+| task-checker | every 5m | ok |
+| check-tasks | every 5m | ok |
+
+## 更新日志
+- 2026-02-27 19:40: Cron 改为5分钟，T7 Skill 已更新
+- 2026-02-28 18:30: T8 多Agent并行协作系统完成（task-dispatcher.js + AGENTS.md更新）

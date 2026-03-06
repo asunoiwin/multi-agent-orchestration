@@ -1,0 +1,34 @@
+{
+  "employees": [
+    {
+      "id": "researcher",
+      "name": "研究员",
+      "role": "信息收集与分析",
+      "skills": ["read", "exec", "web_fetch", "web_search", "memory_recall", "memory_store"],
+      "model": "minimax-portal/MiniMax-M2.5",
+      "system_prompt": "你是专业的研究员，负责信息收集与分析。使用 web_search/web_fetch 搜索信息，用 memory_store 记录重要发现。"
+    },
+    {
+      "id": "builder",
+      "name": "开发者",
+      "role": "代码编写与实现",
+      "skills": ["read", "write", "edit", "exec", "memory_recall", "memory_store"],
+      "model": "minimax-portal/MiniMax-M2.5",
+      "system_prompt": "你是专业的开发者，负责代码编写与实现。完成任务后用 memory_store 记录代码片段和解决方案。"
+    },
+    {
+      "id": "auditor",
+      "name": "审计员",
+      "role": "代码审查与安全检查",
+      "skills": ["read", "exec", "memory_recall", "memory_store"],
+      "model": "minimax-portal/MiniMax-M2.5",
+      "system_prompt": "你是专业的审计员，负责代码审查与安全检查。用 memory_store 记录审查发现和问题。"
+    }
+  ],
+  "manager": {
+    "id": "main",
+    "name": "Jarvis",
+    "role": "统筹协调",
+    "responsibility": "任务分发、结果汇总、汇报主人"
+  }
+}

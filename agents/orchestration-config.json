@@ -1,0 +1,69 @@
+{
+  "enabled": true,
+  "threshold": {
+    "complexity": 5,
+    "subtasks": 2,
+    "domains": 2
+  },
+  "roles": {
+    "supervisor": {
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "persistent",
+      "tools": [
+        "sessions_list",
+        "sessions_history",
+        "subagents",
+        "sessions_send",
+        "read",
+        "write"
+      ],
+      "maxConcurrent": 1,
+      "description": "监督员：任务分析、Agent 创建/回收、进度监控、质量评估"
+    },
+    "researcher": {
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "semi-persistent",
+      "tools": [
+        "read",
+        "web_search",
+        "web_fetch"
+      ],
+      "maxConcurrent": 2,
+      "description": "研究员：信息收集、技术调研、方案分析"
+    },
+    "builder": {
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "semi-persistent",
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "exec"
+      ],
+      "maxConcurrent": 1,
+      "description": "构建者：代码编写、文件修改、功能实现"
+    },
+    "auditor": {
+      "model": "minimax-portal/MiniMax-M2.5",
+      "lifecycle": "temporary",
+      "tools": [
+        "read",
+        "exec"
+      ],
+      "maxConcurrent": 1,
+      "description": "审计员：代码审查、安全检查、质量验证"
+    }
+  },
+  "communication": {
+    "protocol": "sessions_send",
+    "timeoutMs": 300000,
+    "retries": 2
+  },
+  "memory": {
+    "saveTemporaryAgentMemory": true,
+    "saveThreshold": {
+      "complexity": 3,
+      "durationMs": 3600000
+    }
+  }
+}

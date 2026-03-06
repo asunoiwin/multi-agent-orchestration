@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+*.log
+.env
+.config_hash
+.guardian_errors
+agents/active-agents.json
+agents/current-plan.json
+agents/progress-report.json
+agents/tasks/
+agents/evaluations/
+agents/memories/
