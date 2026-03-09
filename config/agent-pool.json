@@ -1,0 +1,84 @@
+{
+  "version": "2.0.0",
+  "description": "Portable dynamic agent pool for multi-agent orchestration",
+  "roles": [
+    {
+      "id": "supervisor",
+      "name": "Supervisor",
+      "purpose": "Analyze tasks, choose roles, coordinate execution, recover results",
+      "triggerCapabilities": ["planning", "coordination", "monitoring"],
+      "skills": ["read", "write", "sessions_list", "sessions_history", "sessions_send", "subagents"],
+      "deny": ["gateway.*", "cron.*", "plugins.*", "exec"],
+      "memory": {
+        "scope": "task-state",
+        "items": ["execution_plan", "agent_roster", "dependency_graph", "result_summary"]
+      },
+      "lifecycle": "persistent"
+    },
+    {
+      "id": "web-researcher",
+      "name": "Web Researcher",
+      "purpose": "Search, compare, verify external information",
+      "triggerCapabilities": ["research", "verification", "comparison"],
+      "skills": ["read", "web_search", "web_fetch", "browser"],
+      "deny": ["write", "edit", "exec", "sessions_spawn", "gateway.*", "cron.*", "plugins.*"],
+      "memory": {
+        "scope": "working",
+        "items": ["source_list", "comparison_notes", "trusted_domains"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "code-implementer",
+      "name": "Code Implementer",
+      "purpose": "Implement code, config, scripts, refactors",
+      "triggerCapabilities": ["implementation", "coding", "refactor", "configuration"],
+      "skills": ["read", "write", "edit", "exec"],
+      "deny": ["sessions_spawn", "gateway.*", "cron.*", "plugins.*"],
+      "memory": {
+        "scope": "working",
+        "items": ["file_targets", "constraints", "acceptance_checks"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "quality-auditor",
+      "name": "Quality Auditor",
+      "purpose": "Review quality, safety, tests, regressions",
+      "triggerCapabilities": ["audit", "testing", "validation", "security"],
+      "skills": ["read", "exec"],
+      "deny": ["write", "edit", "sessions_spawn", "gateway.*", "cron.*", "plugins.*"],
+      "memory": {
+        "scope": "working",
+        "items": ["risk_checklist", "test_results", "review_findings"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "doc-synthesizer",
+      "name": "Doc Synthesizer",
+      "purpose": "Write reports, docs, summaries, handoff notes",
+      "triggerCapabilities": ["documentation", "reporting", "summarization"],
+      "skills": ["read", "write"],
+      "deny": ["exec", "web_search", "browser", "sessions_spawn", "gateway.*", "cron.*", "plugins.*"],
+      "memory": {
+        "scope": "working",
+        "items": ["outline", "source_materials", "style_constraints"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "data-analyst",
+      "name": "Data Analyst",
+      "purpose": "Analyze structured info, compare options, produce tables/insights",
+      "triggerCapabilities": ["analysis", "metrics", "comparison"],
+      "skills": ["read", "write", "exec"],
+      "deny": ["web_search", "browser", "sessions_spawn", "gateway.*", "cron.*", "plugins.*"],
+      "memory": {
+        "scope": "working",
+        "items": ["metrics", "comparison_matrix", "decision_notes"]
+      },
+      "lifecycle": "ephemeral"
+    }
+  ]
+}

@@ -10,3 +10,5 @@ agents/progress-report.json
 agents/tasks/
 agents/evaluations/
 agents/memories/
+runtime/*.json
+tasks/*.json
