@@ -14,61 +14,52 @@
 ```text
 multi-agent-orchestration/
 ├── config/
-│   └── agent-pool.json        # 动态角色池（可迁移）
-├── runtime/
-│   ├── active-agents.json     # 运行态（不提交）
-│   └── supervisor-state.json  # 运行态（不提交）
-├── tasks/                     # 待处理任务队列（不提交）
-├── docs/
+│   ├── agent-pool.json        # 动态角色池定义
+│   └── agent-mapping.json     # 角色 → 真实 OpenClaw agentId 映射
+├── runtime/                   # 运行态（不提交）
+├── tasks/                     # 任务队列（不提交）
 ├── dynamic-orchestrator.js    # 智能任务解析 + 角色选择 + 子任务生成
-├── task-intake.js             # 任务入口，负责生成任务文件
-├── supervisor-runner.js       # Supervisor 执行器（run once）
+├── task-intake.js             # 任务入口
+├── supervisor-runner.js       # Supervisor 分配器
+├── live-executor.js           # 真实执行入口（生成 sessions_spawn 指令）
+├── orchestrator-main.js       # 主编排器（串联全流程）
+├── result-recovery.js         # 结果回收 + 依赖检查 + 状态汇总
+├── task-analyzer.js           # 任务复杂度分析引擎
+├── task-dispatcher.js         # 旧版任务分发器（兼容）
 └── ...
 ```
 
-## 架构说明
+## 架构
 
-### 1. AGENTS.md / 系统规则层
-- 永久规定：主会话收到任务先进行智能解析。
-- 对复杂任务，交给 Supervisor；对简单任务，主会话直接处理。
-- 这层是**执行机制规则**，不是运行态数据。
+```text
+用户任务
+    ↓
+[Hook: multi-agent-orchestrator]  ← agent:bootstrap 时注入编排规则
+    ↓
+主会话（Jarvis）判断复杂度
+    ↓
+    ├─ 简单任务 → 直接处理
+    └─ 复杂任务 → live-executor.js
+         ↓
+    task-intake.js → 生成任务文件
+         ↓
+    supervisor-runner.js → 分配角色 + 生成 spawn 指令
+         ↓
+    sessions_spawn → 创建真实 subagent
+         ↓
+    [Agent 池]
+    ├─ web-researcher   → agentId: researcher
+    ├─ code-implementer → agentId: builder
+    ├─ quality-auditor  → agentId: auditor
+    ├─ doc-synthesizer  → agentId: researcher
+    └─ data-analyst     → agentId: researcher
+         ↓
+    result-recovery.js → 回收结果 + 依赖推进
+         ↓
+    主会话汇总交付
+```
 
-### 2. Hook / 触发层
-推荐把 Hook 配成：
-- 检测任务型消息
-- 调用 `node task-intake.js "<任务>"`
-- 再调用 `node supervisor-runner.js`
-
-这样每次下发任务都会自动触发，不靠人工记忆。
-
-### 3. Supervisor / 编排层
-`supervisor-runner.js` 职责：
-- 读取 tasks/ 中的 planned 任务
-- 根据 `dynamic-orchestrator.js` 的计划分配角色
-- 把待执行 agent 写入 `runtime/active-agents.json`
-- 后续可扩展为真正创建 subagent / sessions
-
-### 4. Agent Pool / 角色池
-角色池定义在 `config/agent-pool.json`，每个角色包含：
-- purpose：适用任务边界
-- triggerCapabilities：触发能力标签
-- skills：允许工具
-- deny：禁止工具
-- memory：该角色运行时需要的工作记忆
-- lifecycle：生命周期
-
-## 当前内置角色
-
-- `supervisor`：编排/协调/回收
-- `web-researcher`：搜索/验证/对比
-- `code-implementer`：开发/配置/重构
-- `quality-auditor`：测试/安全/验证
-- `doc-synthesizer`：文档/汇总/交接
-- `data-analyst`：分析/指标/比较
-
-你可以继续新增更多专业角色，而不是被固定三角色限制。
-
-## 安装与初始化
+## 安装
 
 ### 1. 克隆仓库
 ```bash
@@ -76,49 +67,101 @@ git clone https://github.com/asunoiwin/multi-agent-orchestration.git
 cd multi-agent-orchestration
 ```
 
-### 2. 初始化目录
+### 2. 初始化运行目录
 ```bash
-mkdir -p runtime tasks docs config
+mkdir -p runtime tasks
 ```
 
-### 3. 试跑一个任务
+### 3. 配置 agent 映射
+编辑 `config/agent-mapping.json`，把角色映射到你的 OpenClaw agent ID：
+```json
+{
+  "mapping": {
+    "web-researcher":   { "agentId": "researcher", "model": "minimax" },
+    "code-implementer": { "agentId": "builder",    "model": "minimax" },
+    "quality-auditor":  { "agentId": "auditor",    "model": "minimax" }
+  }
+}
+```
+
+### 4. 安装 Hook（可选但推荐）
 ```bash
-node task-intake.js "先调研一个方案，然后实现 demo，最后做质量检查"
+# 复制 hook 到 OpenClaw hooks 目录
+cp -r hooks/multi-agent-orchestrator ~/.openclaw/hooks/
+
+# 在 ~/.openclaw/openclaw.json 的 hooks.internal.entries 中添加：
+# "multi-agent-orchestrator": {
+#   "enabled": true,
+#   "path": "~/.openclaw/hooks/multi-agent-orchestrator"
+# }
+```
+
+### 5. 验证
+```bash
+# 分析一个复杂任务
+node live-executor.js "先调研方案，然后实现 demo，最后做代码审查"
+
+# 应输出包含 spawnNow / spawnLater 的 JSON
+```
+
+## 使用
+
+### 完整编排（推荐）
+```bash
+node live-executor.js "先搜索最新的 AI 框架，然后写一个对比报告"
+```
+
+输出包含：
+- `spawnNow`: 立即需要创建的 agent（含 agentId、prompt、model）
+- `spawnLater`: 等待依赖完成后创建的 agent
+- `executionMode`: serial / parallel
+
+### 单步使用
+```bash
+# 仅分析任务
+node dynamic-orchestrator.js "研究并实现用户认证系统"
+
+# 仅入队
+node task-intake.js "优化系统性能"
+
+# 仅分配
 node supervisor-runner.js
+
+# 回收结果
+node result-recovery.js all
+node result-recovery.js next        # 查看下一个可启动的 agent
+node result-recovery.js <taskId>    # 按任务回收
 ```
 
-### 4. 查看结果
-```bash
-cat tasks/*.json
-cat runtime/active-agents.json
-```
+## 角色池
 
-## 与 OpenClaw 集成建议
+定义在 `config/agent-pool.json`，每个角色包含：
 
-推荐的 Hook 逻辑：
-```bash
-node task-intake.js "<用户任务>"
-node supervisor-runner.js
-```
+| 字段 | 说明 |
+|------|------|
+| purpose | 任务边界 |
+| triggerCapabilities | 触发能力标签 |
+| skills | 允许的工具白名单 |
+| deny | 禁止的工具黑名单 |
+| memory | 工作记忆需求 |
+| lifecycle | persistent / ephemeral |
 
-后续可继续扩展为：
-- supervisor-runner 真正调用 `sessions_spawn`
-- progress-monitor 基于真实 session 状态检查
-- result-recovery 自动汇总 sessions_history
+内置 6 个角色：supervisor、web-researcher、code-implementer、quality-auditor、doc-synthesizer、data-analyst。
 
-## 为什么更可迁移
+可随时在 `agent-pool.json` 中新增角色，并在 `agent-mapping.json` 中映射到真实 agentId。
 
-- **配置在仓库内**：`config/agent-pool.json`
-- **运行态在仓库内**：`runtime/`、`tasks/`
-- **学习与进化不混入功能配置**：`.learnings/` 仍只留给学习/错误/规则沉淀
-- **别人克隆后无需依赖你的私人工作区结构**
+## 复杂度评分
 
-## 下一步建议
+| 信号 | 分值 |
+|------|------|
+| 任务长度 > 40 字 | +1 |
+| 任务长度 > 100 字 | +1 |
+| 每个匹配的领域 | +1 |
+| 并行关键词 | +2 |
+| 串行关键词 | +2 |
 
-1. 把 `supervisor-runner.js` 接到真实 `sessions_spawn`
-2. 加一个 `result-recovery.js` 自动回收任务结果
-3. 增加 `hook-example.md` 或安装脚本
+阈值：≥3 分启用多 Agent。
 
 ---
 
-版本：v2.0.0
+版本：v2.1.0
