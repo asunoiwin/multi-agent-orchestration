@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "description": "Maps dynamic pool roles to real OpenClaw agent IDs",
+  "mapping": {
+    "web-researcher": {
+      "agentId": "researcher",
+      "model": "minimax"
+    },
+    "code-implementer": {
+      "agentId": "builder",
+      "model": "minimax"
+    },
+    "quality-auditor": {
+      "agentId": "auditor",
+      "model": "minimax"
+    },
+    "doc-synthesizer": {
+      "agentId": "researcher",
+      "model": "minimax"
+    },
+    "data-analyst": {
+      "agentId": "researcher",
+      "model": "minimax"
+    },
+    "supervisor": {
+      "agentId": "main",
+      "model": "minimax"
+    }
+  },
+  "defaults": {
+    "agentId": "main",
+    "model": "minimax",
+    "mode": "run",
+    "cleanup": "delete",
+    "runTimeoutSeconds": 600
+  }
+}

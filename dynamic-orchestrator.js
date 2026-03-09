@@ -13,7 +13,7 @@ function detectFeatures(task) {
   const text = task || '';
   return {
     research: /搜索|调研|分析|研究|对比|查找|了解|收集|查询|验证方案|资料/.test(text),
-    implementation: /开发|编写|实现|写代码|创建|制作|修改|构建|配置|安装|修复|重构|demo/.test(text),
+    implementation: /开发|编写|实现|写代码|创建|制作|修改|构建|配置|安装|修复|重构|demo|示例|样例|完整示例|例子|代码示例/.test(text),
     audit: /检查|审查|验证|测试|审计|评估|排查|lint|安全|质量检查/.test(text),
     documentation: /文档|总结|报告|说明|整理|沉淀|手册/.test(text),
     data: /数据|统计|指标|表格|分析数据|分析指标/.test(text),

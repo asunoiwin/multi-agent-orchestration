@@ -27,32 +27,109 @@ function loadTasks() {
     .sort((a, b) => new Date(a.data.createdAt) - new Date(b.data.createdAt));
 }
 
+function buildAgentPrompt(subtask, taskContext) {
+  const lines = [
+    `# Role: ${subtask.title}`,
+    ``,
+    `## Purpose`,
+    subtask.description,
+    ``,
+    `## Task Context`,
+    `- Original Task: ${taskContext.task}`,
+    `- Your Role: ${subtask.roleId}`,
+    `- Execution Mode: ${taskContext.executionMode}`,
+    ``,
+    `## Your Capabilities`,
+    `Allowed tools: ${subtask.skills.join(', ')}`,
+    ``,
+    `## Constraints`,
+    `Denied tools: ${subtask.deny.join(', ')}`,
+    ``,
+    `## Working Memory`,
+    `Scope: ${subtask.memory.scope}`,
+    `Track: ${subtask.memory.items.join(', ')}`,
+    ``,
+    `## Instructions`,
+    `1. Focus only on your role's responsibility`,
+    `2. Use only allowed tools`,
+    `3. Track required memory items`,
+    `4. Report results clearly when done`,
+    `5. If blocked, explain why and what you need`,
+    ``,
+    `## Deliverable`,
+    `Provide a clear summary of what you accomplished and any artifacts created.`
+  ];
+  return lines.join('\n');
+}
+
+function spawnAgent(subtask, taskContext) {
+  const prompt = buildAgentPrompt(subtask, taskContext);
+  
+  // 构造 sessions_spawn 调用参数
+  const spawnConfig = {
+    runtime: 'subagent',
+    mode: 'session',
+    task: prompt,
+    label: `${taskContext.id}-${subtask.roleId}`,
+    model: 'minimax',
+    cleanup: 'keep',
+    timeoutSeconds: 1800 // 30分钟超时
+  };
+  
+  return {
+    config: spawnConfig,
+    subtask,
+    taskId: taskContext.id
+  };
+}
+
 function allocateAgents(task) {
   const plan = task.plan;
   if (!plan.needsMultiAgent) {
     task.status = 'single';
     task.updatedAt = new Date().toISOString();
-    return { allocated: [], task };
+    return { allocated: [], spawned: [], task };
   }
 
   const active = readJson(ACTIVE_FILE, []);
-  const allocated = plan.subtasks.map((subtask, idx) => ({
-    taskId: task.id,
-    roleId: subtask.roleId,
-    title: subtask.title,
-    status: idx === 0 || plan.executionMode === 'parallel' ? 'ready' : 'waiting',
-    dependsOn: subtask.dependsOn,
-    skills: subtask.skills,
-    deny: subtask.deny,
-    memory: subtask.memory,
-    createdAt: new Date().toISOString(),
-    task: subtask.description
-  }));
+  const spawned = [];
+  
+  // 只启动 ready 状态的 agent（串行模式下只有第一个或并行模式下所有）
+  const readySubtasks = plan.subtasks.filter((st, idx) => {
+    if (plan.executionMode === 'parallel') return true;
+    return idx === 0; // 串行模式只启动第一个
+  });
+
+  const allocated = plan.subtasks.map((subtask, idx) => {
+    const isReady = readySubtasks.includes(subtask);
+    const agentRecord = {
+      taskId: task.id,
+      roleId: subtask.roleId,
+      title: subtask.title,
+      status: isReady ? 'spawning' : 'waiting',
+      dependsOn: subtask.dependsOn,
+      skills: subtask.skills,
+      deny: subtask.deny,
+      memory: subtask.memory,
+      createdAt: new Date().toISOString(),
+      task: subtask.description
+    };
+
+    if (isReady) {
+      const spawnInfo = spawnAgent(subtask, task);
+      spawned.push(spawnInfo);
+      agentRecord.spawnConfig = spawnInfo.config;
+      agentRecord.label = spawnInfo.config.label;
+    }
+
+    return agentRecord;
+  });
 
   writeJson(ACTIVE_FILE, active.concat(allocated));
   task.status = 'allocated';
   task.updatedAt = new Date().toISOString();
-  return { allocated, task };
+  
+  return { allocated, spawned, task };
 }
 
 function supervisorRunOnce() {
@@ -61,26 +138,56 @@ function supervisorRunOnce() {
   const results = [];
 
   for (const item of pending) {
-    const { allocated, task } = allocateAgents(item.data);
+    const { allocated, spawned, task } = allocateAgents(item.data);
     writeJson(item.file, task);
-    results.push({ taskId: task.id, allocated: allocated.map(a => ({ roleId: a.roleId, status: a.status })) });
+    
+    results.push({
+      taskId: task.id,
+      allocated: allocated.map(a => ({
+        roleId: a.roleId,
+        status: a.status,
+        label: a.label || null
+      })),
+      spawned: spawned.map(s => ({
+        label: s.config.label,
+        roleId: s.subtask.roleId,
+        command: `sessions_spawn with label="${s.config.label}"`
+      }))
+    });
   }
 
-  writeJson(STATE_FILE, {
+  const state = {
     checkedAt: new Date().toISOString(),
     pendingCount: pending.length,
-    handled: results
-  });
-
-  return {
-    checkedAt: new Date().toISOString(),
-    pendingCount: pending.length,
-    handled: results
+    handled: results,
+    nextAction: results.length > 0 
+      ? 'Call sessions_spawn for each spawned agent'
+      : 'No pending tasks'
   };
+
+  writeJson(STATE_FILE, state);
+  return state;
 }
 
 if (require.main === module) {
-  console.log(JSON.stringify(supervisorRunOnce(), null, 2));
+  const result = supervisorRunOnce();
+  console.log(JSON.stringify(result, null, 2));
+  
+  if (result.handled.length > 0) {
+    console.log('\n=== Next Steps ===');
+    result.handled.forEach(h => {
+      h.spawned.forEach(s => {
+        console.log(`\nFor ${s.label}:`);
+        console.log(`  sessions_spawn({`);
+        console.log(`    runtime: "subagent",`);
+        console.log(`    mode: "session",`);
+        console.log(`    label: "${s.label}",`);
+        console.log(`    model: "minimax",`);
+        console.log(`    task: "<see runtime/active-agents.json for full prompt>"`);
+        console.log(`  })`);
+      });
+    });
+  }
 }
 
-module.exports = { supervisorRunOnce };
+module.exports = { supervisorRunOnce, spawnAgent, buildAgentPrompt };
