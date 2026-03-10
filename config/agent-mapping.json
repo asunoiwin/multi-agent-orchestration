@@ -22,8 +22,8 @@
       "agentId": "researcher",
       "model": "minimax"
     },
-    "supervisor": {
-      "agentId": "main",
+    "os-operator": {
+      "agentId": "builder",
       "model": "minimax"
     }
   },

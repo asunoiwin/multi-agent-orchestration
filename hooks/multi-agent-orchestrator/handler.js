@@ -1,64 +1,71 @@
 /**
- * Multi-Agent Orchestrator Hook for OpenClaw
+ * Multi-Agent Orchestrator Hook
  * 
- * Injects orchestration rules into main agent bootstrap.
- * Tells the agent to analyze tasks and use dynamic agent pool.
+ * 功能：在消息到达主会话前，强制判断是否需要多 agent
+ * 触发时机：before_agent_start
  */
 
-const ORCHESTRATION_REMINDER = `
-## Multi-Agent Orchestration (Auto-Injected)
+const { analyzeTask } = require('../../workspace/multi-agent-orchestration/task-analyzer');
+const { autoExecute } = require('../../workspace/multi-agent-orchestration/auto-executor');
 
-When you receive a task, evaluate whether it needs multi-agent orchestration:
+module.exports = {
+  name: 'multi-agent-orchestrator',
+  version: '1.0.0',
+  
+  async execute(context, api) {
+    const { event, agentId } = context;
+    
+    // 只处理主会话
+    if (agentId !== 'main') {
+      return;
+    }
+    
+    // 只处理 before_agent_start 事件
+    if (event.type !== 'before_agent_start') {
+      return;
+    }
+    
+    const userMessage = event.prompt;
+    if (!userMessage || userMessage.length < 10) {
+      return; // 太短的消息不处理
+    }
+    
+    try {
+      // 1. 分析任务复杂度
+      const analysis = await analyzeTask(userMessage);
+      
+      api.logger.info(`[multi-agent-orchestrator] Task score: ${analysis.score}/5`);
+      
+      // 2. 如果复杂度 ≥ 3，强制路由到 orchestrator
+      if (analysis.score >= 3) {
+        api.logger.info(`[multi-agent-orchestrator] 🚀 Routing to orchestrator (score: ${analysis.score})`);
+        
+        // 注入提示，告诉主会话必须使用 orchestrator
+        event.context = event.context || {};
+        event.context.forceOrchestrator = true;
+        event.context.taskAnalysis = analysis;
+        
+        // 修改 prompt，强制主会话调用 orchestrator
+        event.prompt = `【系统强制路由】此任务复杂度评分 ${analysis.score}/5，必须使用多 Agent 系统处理。
 
-### Quick Decision
-- **Simple task** (single domain, no phases): Handle directly.
-- **Complex task** (multiple domains, explicit phases, parallel work): Use orchestration.
+原始任务：${userMessage}
 
-### Orchestration Flow
-1. Run: \`node ~/. openclaw/workspace/multi-agent-orchestration/live-executor.js "<task>"\`
-2. Read the output JSON
-3. For each entry in \`spawnNow\`, call \`sessions_spawn\` with:
-   - \`runtime: "subagent"\`
-   - \`agentId\`: from the output
-   - \`model\`: from the output  
-   - \`label\`: from the output
-   - \`task\`: the prompt from the output
-   - \`mode: "run"\`
-4. When a serial agent completes, check \`spawnLater\` for the next agent whose dependencies are met
-5. After all agents complete, use \`result-recovery.js\` to collect results
-6. Synthesize and deliver to user
+任务分析：
+- 类型：${analysis.categories.join(', ')}
+- 建议角色：${analysis.suggestedRoles.join(' → ')}
+- 执行模式：${analysis.parallel ? '并行' : '串行'}
 
-### Available Roles (from config/agent-pool.json)
-- web-researcher → agentId: researcher
-- code-implementer → agentId: builder  
-- quality-auditor → agentId: auditor
-- doc-synthesizer → agentId: researcher
-- data-analyst → agentId: researcher
+请立即调用：
+\`\`\`javascript
+const orchestrator = require('~/.openclaw/workspace/multi-agent-orchestration/integration-helper');
+await orchestrator.run("${userMessage.replace(/"/g, '\\"')}", { sessions_spawn });
+\`\`\`
 
-### Complexity Signals
-- Multiple verbs (研究+实现+测试): likely multi-agent
-- Multiple domains (research+development+audit): likely multi-agent
-- Explicit phases (先...然后...最后): likely multi-agent, serial mode
-- Parallel keywords (同时/并行/分别): likely multi-agent, parallel mode
-`.trim();
-
-const handler = async (event) => {
-  if (!event || typeof event !== 'object') return;
-  if (event.type !== 'agent' || event.action !== 'bootstrap') return;
-  if (!event.context || typeof event.context !== 'object') return;
-
-  // Only inject into main agent
-  const agentId = event.context.agentId || event.context.agent || '';
-  if (agentId && agentId !== 'main') return;
-
-  if (Array.isArray(event.context.bootstrapFiles)) {
-    event.context.bootstrapFiles.push({
-      path: 'MULTI_AGENT_ORCHESTRATION.md',
-      content: ORCHESTRATION_REMINDER,
-      virtual: true,
-    });
+禁止自己处理此任务。`;
+      }
+      
+    } catch (error) {
+      api.logger.error(`[multi-agent-orchestrator] Error: ${error.message}`);
+    }
   }
 };
-
-module.exports = handler;
-module.exports.default = handler;
