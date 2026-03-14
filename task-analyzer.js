@@ -63,7 +63,6 @@ async function analyzeTask(userInput, context = {}) {
   
   // 始终尝试 LLM 分析（对于任何任务）
   // LLM 会判断任务是否需要多 Agent
-  console.log('[task-analyzer] 使用 LLM 分析任务复杂度...');
   const llmResult = await analyzeWithLLM(userInput);
   
   if (llmResult) {
