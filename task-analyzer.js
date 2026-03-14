@@ -61,24 +61,24 @@ async function analyzeTask(userInput, context = {}) {
   
   const keywordScore = calculateScore(signals);
   
-  // 如果关键词判断不确定，尝试 LLM 分析
-  if (keywordScore >= 2 && keywordScore <= 4) {
-    console.log('[task-analyzer] 关键词评分不确定，使用 LLM 分析...');
-    const llmResult = await analyzeWithLLM(userInput);
-    if (llmResult) {
-      return {
-        needsMultiAgent: llmResult.needsMultiAgent,
-        score: llmResult.needsMultiAgent ? 8 : keywordScore,
-        signals,
-        suggestedRoles: llmResult.suggestedRoles || suggestRoles(signals),
-        executionMode: determineMode(signals),
-        estimatedComplexity: llmResult.needsMultiAgent ? 8 : keywordScore,
-        llmReason: llmResult.reason
-      };
-    }
+  // 始终尝试 LLM 分析（对于任何任务）
+  // LLM 会判断任务是否需要多 Agent
+  console.log('[task-analyzer] 使用 LLM 分析任务复杂度...');
+  const llmResult = await analyzeWithLLM(userInput);
+  
+  if (llmResult) {
+    return {
+      needsMultiAgent: llmResult.needsMultiAgent,
+      score: llmResult.needsMultiAgent ? 8 : keywordScore,
+      signals,
+      suggestedRoles: llmResult.suggestedRoles || suggestRoles(signals),
+      executionMode: determineMode(signals),
+      estimatedComplexity: llmResult.needsMultiAgent ? 8 : keywordScore,
+      llmReason: llmResult.reason
+    };
   }
   
-  // 关键词判断结果明确时直接返回
+  // LLM 失败时回退到关键词判断
   return {
     needsMultiAgent: keywordScore >= 5,
     score: keywordScore,
