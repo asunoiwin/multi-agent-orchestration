@@ -2,15 +2,56 @@
 /**
  * 任务分析引擎
  * 自动判断任务是否需要多 Agent 协作
+ * 支持关键词 + LLM 双重分析
  */
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 /**
- * 分析任务复杂度
+ * LLM 智能分析任务复杂度
  */
-function analyzeTask(userInput, context = {}) {
+async function analyzeWithLLM(userInput) {
+  const prompt = `你是一个任务复杂度分析专家。分析以下用户任务，判断是否需要多个 AI Agent 协作完成。
+
+判断标准：
+- 需要多 Agent：任务涉及多个阶段（调研→实现→测试）、多个领域、需要并行处理、或者步骤复杂
+- 只需要单个 Agent：简单任务，可以一步完成
+
+返回 JSON 格式：
+{"needsMultiAgent": true/False, "reason": "简短原因", "suggestedRoles": ["role1", "role2"]}
+
+任务内容：${userInput.slice(0, 500)}
+
+只返回 JSON，不要其他内容。`;
+
+  try {
+    const apiKey = process.env.MINIMAX_API_KEY || 'minimax-oauth';
+    const curlCmd = `curl -s -X POST 'https://api.minimax.chat/v1/text/chatcompletion_pro' -H 'Authorization: Bearer ${apiKey}' -H 'Content-Type: application/json' -d '{"model":"MiniMax-M2.5-Highspeed","messages":[{"role":"system","content":"你是一个任务复杂度分析专家。只返回JSON。"},{"role":"user","content":"${prompt.replace(/"/g, '\\"').replace(/\n/g, ' ')}"}],"temperature":0.3,"max_tokens":200}'`;
+    
+    const result = execSync(curlCmd, { encoding: 'utf8', timeout: 15000 });
+    const response = JSON.parse(result);
+    const resultText = response.choices?.[0]?.message?.content || '';
+    
+    const jsonMatch = resultText.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const r = JSON.parse(jsonMatch[0]);
+      console.log('[task-analyzer] LLM 判断:', r.needsMultiAgent, '| roles:', r.suggestedRoles);
+      return r;
+    }
+    return null;
+  } catch (e) {
+    console.log('[task-analyzer] LLM 调用失败:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 分析任务复杂度（关键词 + LLM）
+ */
+async function analyzeTask(userInput, context = {}) {
+  // 先用关键词快速判断
   const signals = {
     keywords: detectKeywords(userInput),
     complexity: estimateComplexity(userInput, context),
@@ -18,15 +59,33 @@ function analyzeTask(userInput, context = {}) {
     phases: detectPhases(userInput)
   };
   
-  const score = calculateScore(signals);
+  const keywordScore = calculateScore(signals);
   
+  // 如果关键词判断不确定，尝试 LLM 分析
+  if (keywordScore >= 2 && keywordScore <= 4) {
+    console.log('[task-analyzer] 关键词评分不确定，使用 LLM 分析...');
+    const llmResult = await analyzeWithLLM(userInput);
+    if (llmResult) {
+      return {
+        needsMultiAgent: llmResult.needsMultiAgent,
+        score: llmResult.needsMultiAgent ? 8 : keywordScore,
+        signals,
+        suggestedRoles: llmResult.suggestedRoles || suggestRoles(signals),
+        executionMode: determineMode(signals),
+        estimatedComplexity: llmResult.needsMultiAgent ? 8 : keywordScore,
+        llmReason: llmResult.reason
+      };
+    }
+  }
+  
+  // 关键词判断结果明确时直接返回
   return {
-    needsMultiAgent: score >= 5,
-    score,
+    needsMultiAgent: keywordScore >= 5,
+    score: keywordScore,
     signals,
     suggestedRoles: suggestRoles(signals),
     executionMode: determineMode(signals),
-    estimatedComplexity: score
+    estimatedComplexity: keywordScore
   };
 }
 
