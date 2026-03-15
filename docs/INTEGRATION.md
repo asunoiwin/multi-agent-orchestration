@@ -46,7 +46,7 @@ const result = await autoExecute("搜索并对比最新 AI 框架", {
 
 ```bash
 # 生成执行计划（不真实 spawn）
-node auto-executor.js "先调研方案，然后实现 demo"
+npm run smoke
 
 # 推进下一个
 node result-recovery.js next
@@ -164,6 +164,7 @@ cat tasks/task-xxx.json
 3. **定期检查 next**：串行模式下，每个 agent 完成后检查 `getNextAgents()`
 4. **保存结果**：agent 输出要写入 `updateAgentStatus` 的 result 字段
 5. **清理运行态**：任务完成后可选择清理 `runtime/` 和 `tasks/`
+6. **传递 sessionId**：如果你希望主会话和记忆系统共享上下文，运行前设置 `OPENCLAW_SESSION_ID`
 
 ---
 

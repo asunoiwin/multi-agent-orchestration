@@ -4,7 +4,7 @@
  * 多 Agent 协作系统主入口
  */
 
-const { analyzeTask } = require('./task-analyzer.js');
+const { analyzeTask } = require('./task-analyzer.cjs');
 const { generateAgentTemplate } = require('./agent-manager.js');
 
 /**
@@ -14,12 +14,15 @@ async function orchestrate(userInput, context = {}) {
   console.log('[orchestrator] Analyzing task...');
   
   // 1. 分析任务
-  const analysis = analyzeTask(userInput, context);
+  const analysis = await analyzeTask(userInput, context);
+  const needsMultiAgent = analysis.decision === 'light_multi' || analysis.decision === 'multi';
+  const suggestedRoles = (analysis.agents || []).map((agent) => String(agent.role || '').toLowerCase());
+  const executionMode = analysis.decision === 'multi' ? 'parallel' : needsMultiAgent ? 'serial' : 'single';
   
-  console.log(`[orchestrator] Task complexity: ${analysis.score}`);
-  console.log(`[orchestrator] Needs multi-agent: ${analysis.needsMultiAgent}`);
+  console.log(`[orchestrator] Task complexity: ${analysis.total_score}`);
+  console.log(`[orchestrator] Needs multi-agent: ${needsMultiAgent}`);
   
-  if (!analysis.needsMultiAgent) {
+  if (!needsMultiAgent) {
     console.log('[orchestrator] Task is simple, main agent will handle it');
     return {
       mode: 'single',
@@ -28,18 +31,18 @@ async function orchestrate(userInput, context = {}) {
   }
   
   // 2. 生成执行计划
-  console.log(`[orchestrator] Suggested roles: ${analysis.suggestedRoles.join(', ')}`);
-  console.log(`[orchestrator] Execution mode: ${analysis.executionMode}`);
+  console.log(`[orchestrator] Suggested roles: ${suggestedRoles.join(', ')}`);
+  console.log(`[orchestrator] Execution mode: ${executionMode}`);
   
   const plan = {
     mode: 'multi',
-    executionMode: analysis.executionMode,
+    executionMode,
     agents: [],
     workflow: []
   };
   
   // 3. 为每个角色生成配置
-  for (const role of analysis.suggestedRoles) {
+  for (const role of suggestedRoles) {
     const agentConfig = generateAgentTemplate(role);
     plan.agents.push({
       role,
@@ -49,16 +52,16 @@ async function orchestrate(userInput, context = {}) {
   }
   
   // 4. 生成工作流
-  if (analysis.executionMode === 'parallel') {
+  if (executionMode === 'parallel') {
     plan.workflow = [
       {
         step: 1,
-        agents: analysis.suggestedRoles,
+        agents: suggestedRoles,
         mode: 'parallel'
       }
     ];
-  } else if (analysis.executionMode === 'serial') {
-    plan.workflow = analysis.suggestedRoles.map((role, index) => ({
+  } else if (executionMode === 'serial') {
+    plan.workflow = suggestedRoles.map((role, index) => ({
       step: index + 1,
       agents: [role],
       mode: 'serial'

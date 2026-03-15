@@ -1,11 +1,89 @@
 {
-  "version": "2.0.0",
+  "version": "2.1.1",
   "description": "Portable dynamic agent pool for multi-agent orchestration",
   "roles": [
     {
+      "id": "supervisor",
+      "name": "Supervisor",
+      "purpose": "Analyze tasks, coordinate execution, and recover final results.",
+      "triggerCapabilities": ["planning", "coordination", "monitoring"],
+      "skills": ["read", "write", "sessions_list", "sessions_history", "sessions_send", "subagents"],
+      "deny": ["gateway.*", "cron.*", "plugins.*", "exec"],
+      "memory": {
+        "scope": "task-state",
+        "items": ["execution_plan", "dependency_graph", "result_summary"]
+      },
+      "lifecycle": "persistent"
+    },
+    {
+      "id": "web-researcher",
+      "name": "Web Researcher",
+      "purpose": "Collect references, compare options, and summarize findings.",
+      "triggerCapabilities": ["research", "comparison", "fact-gathering"],
+      "skills": ["read", "web_search", "web_fetch"],
+      "deny": ["write", "edit", "exec", "sessions_spawn"],
+      "memory": {
+        "scope": "research-context",
+        "items": ["sources", "constraints", "decision_inputs"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "code-implementer",
+      "name": "Code Implementer",
+      "purpose": "Implement code changes, configs, and working demos.",
+      "triggerCapabilities": ["implementation", "coding", "configuration"],
+      "skills": ["read", "write", "edit", "exec"],
+      "deny": ["gateway.*", "cron.*", "plugins.*", "sessions_spawn"],
+      "memory": {
+        "scope": "build-context",
+        "items": ["changed_files", "commands_run", "artifacts"]
+      },
+      "lifecycle": "semi-persistent"
+    },
+    {
+      "id": "quality-auditor",
+      "name": "Quality Auditor",
+      "purpose": "Review risks, verify outputs, and catch regressions.",
+      "triggerCapabilities": ["audit", "verification", "review"],
+      "skills": ["read", "exec"],
+      "deny": ["write", "edit", "sessions_spawn"],
+      "memory": {
+        "scope": "quality-context",
+        "items": ["review_findings", "verification_status", "risk_notes"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "doc-synthesizer",
+      "name": "Doc Synthesizer",
+      "purpose": "Turn raw outputs into concise docs, reports, and handoff notes.",
+      "triggerCapabilities": ["documentation", "handoff", "summarization"],
+      "skills": ["read", "write"],
+      "deny": ["exec", "sessions_spawn"],
+      "memory": {
+        "scope": "docs-context",
+        "items": ["deliverables", "handoff_notes", "open_questions"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "data-analyst",
+      "name": "Data Analyst",
+      "purpose": "Inspect metrics, datasets, and structured outputs.",
+      "triggerCapabilities": ["data", "metrics", "analysis"],
+      "skills": ["read", "exec", "write"],
+      "deny": ["gateway.*", "cron.*", "plugins.*", "sessions_spawn"],
+      "memory": {
+        "scope": "data-context",
+        "items": ["queries", "metrics", "analysis_results"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
       "id": "os-operator",
       "name": "OS Operator",
-      "purpose": "Operate native OS applications, system settings, window management, and native software functions.",
+      "purpose": "Operate native OS applications and perform local environment actions when needed.",
       "triggerCapabilities": ["os-operation", "app-control", "system-settings"],
       "skills": ["exec", "nodes", "canvas"],
       "deny": ["web_search", "web_fetch", "browser"],
@@ -14,19 +92,6 @@
         "items": ["active_window", "installed_apps", "screen_coordinates"]
       },
       "lifecycle": "ephemeral"
-    },
-    {
-      "id": "supervisor",
-      "name": "Supervisor",
-      "purpose": "Analyze tasks, choose roles, coordinate execution, recover results",
-      "triggerCapabilities": ["planning", "coordination", "monitoring"],
-      "skills": ["read", "write", "sessions_list", "sessions_history", "sessions_send", "subagents"],
-      "deny": ["gateway.*", "cron.*", "plugins.*", "exec"],
-      "memory": {
-        "scope": "task-state",
-        "items": ["execution_plan", "agent_roster", "dependency_graph", "result_summary"]
-      },
-      "lifecycle": "persistent"
     }
   ]
 }

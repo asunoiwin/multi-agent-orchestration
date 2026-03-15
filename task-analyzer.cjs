@@ -151,8 +151,19 @@ function totalScore(scores) {
 
 function decide(scores) {
   const total = totalScore(scores);
+
+  // 多阶段 + 跨领域任务不应落回 single。
+  if (scores.stages >= 3 && scores.domains >= 2) {
+    return scores.parallelism >= 1 ? 'multi' : 'light_multi';
+  }
+  if (scores.parallelism >= 2 && scores.domains >= 2) {
+    return 'multi';
+  }
+  if (scores.stages >= 2 && scores.domains >= 2) {
+    return 'light_multi';
+  }
   
-  if (total <= SCORE_THRESHOLDS.single) {
+  if (total < SCORE_THRESHOLDS.single) {
     return 'single';
   } else if (total < SCORE_THRESHOLDS.multi) {
     return 'light_multi';
@@ -331,15 +342,18 @@ function getMissingQuestions(scores) {
   return questions.slice(0, 3);
 }
 
-// CLI - 包装为 async IIFE
-(async () => {
-  const input = process.argv.slice(2).join(' ');
-  
-  if (!input) {
-    console.error('Usage: node task-analyzer.js <task>');
-    process.exit(1);
-  }
-  
-  const result = await analyzeTask(input);
-  console.log(JSON.stringify(result, null, 2));
-})();
+if (require.main === module) {
+  (async () => {
+    const input = process.argv.slice(2).join(' ');
+    
+    if (!input) {
+      console.error('Usage: node task-analyzer.cjs <task>');
+      process.exit(1);
+    }
+    
+    const result = await analyzeTask(input);
+    console.log(JSON.stringify(result, null, 2));
+  })();
+}
+
+module.exports = { analyzeTask };

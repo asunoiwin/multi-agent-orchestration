@@ -1,0 +1,13 @@
+{
+  "name": "multi-agent-orchestration",
+  "version": "2.1.1",
+  "description": "Task-oriented multi-agent orchestration for OpenClaw with task/session traceability",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "analyze": "node task-analyzer.cjs",
+    "plan": "node live-executor.js",
+    "recover": "node result-recovery.js all",
+    "smoke": "node live-executor.js \"先调研方案，然后实现 demo，最后做代码审查并输出交付说明\""
+  }
+}

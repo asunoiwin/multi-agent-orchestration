@@ -28,6 +28,7 @@ function loadTasks() {
 }
 
 function buildAgentPrompt(subtask, taskContext) {
+  const sessionId = taskContext?.context?.sessionId || taskContext?.sessionId || 'unknown';
   const lines = [
     `# Role: ${subtask.title}`,
     ``,
@@ -35,6 +36,8 @@ function buildAgentPrompt(subtask, taskContext) {
     subtask.description,
     ``,
     `## Task Context`,
+    `- Task ID: ${taskContext.id}`,
+    `- Session ID: ${sessionId}`,
     `- Original Task: ${taskContext.task}`,
     `- Your Role: ${subtask.roleId}`,
     `- Execution Mode: ${taskContext.executionMode}`,
@@ -52,9 +55,10 @@ function buildAgentPrompt(subtask, taskContext) {
     `## Instructions`,
     `1. Focus only on your role's responsibility`,
     `2. Use only allowed tools`,
-    `3. Track required memory items`,
-    `4. Report results clearly when done`,
-    `5. If blocked, explain why and what you need`,
+    `3. Track required memory items and keep task/session metadata attached to notes`,
+    `4. When storing progress, include taskId=${taskContext.id} and sessionId=${sessionId}`,
+    `5. Report results clearly when done`,
+    `6. If blocked, explain why and what you need`,
     ``,
     `## Deliverable`,
     `Provide a clear summary of what you accomplished and any artifacts created.`
@@ -79,7 +83,8 @@ function spawnAgent(subtask, taskContext) {
   return {
     config: spawnConfig,
     subtask,
-    taskId: taskContext.id
+    taskId: taskContext.id,
+    sessionId: taskContext?.context?.sessionId || null
   };
 }
 
@@ -104,6 +109,7 @@ function allocateAgents(task) {
     const isReady = readySubtasks.includes(subtask);
     const agentRecord = {
       taskId: task.id,
+      sessionId: task.context?.sessionId || null,
       roleId: subtask.roleId,
       title: subtask.title,
       status: isReady ? 'spawning' : 'waiting',

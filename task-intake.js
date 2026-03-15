@@ -17,16 +17,30 @@ function taskId() {
   return `task-${Date.now()}`;
 }
 
-function enqueue(taskText, source = 'manual') {
+function normalizeContext(context = {}, source = 'manual') {
+  return {
+    sessionId: context.sessionId || process.env.OPENCLAW_SESSION_ID || null,
+    parentTaskId: context.parentTaskId || null,
+    traceId: context.traceId || null,
+    requestedBy: context.requestedBy || source,
+  };
+}
+
+function enqueue(taskText, source = 'manual', context = {}) {
   ensureDirs();
   const id = taskId();
   const plan = planTask(taskText);
+  const normalizedContext = normalizeContext(context, source);
   const payload = {
     id,
     source,
     status: plan.needsMultiAgent ? 'planned' : 'single',
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
+    context: {
+      ...normalizedContext,
+      taskId: id
+    },
     plan,
     results: []
   };
@@ -41,7 +55,7 @@ if (require.main === module) {
     console.error('Usage: node task-intake.js <task>');
     process.exit(1);
   }
-  const result = enqueue(task);
+  const result = enqueue(task, 'manual');
   console.log(JSON.stringify({ id: result.id, file: result.file, plan: result.payload.plan }, null, 2));
 }
 

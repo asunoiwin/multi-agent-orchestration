@@ -8,6 +8,7 @@
 2. **动态角色池**：不是固定 researcher/builder/auditor，而是根据任务特征选择预配置角色。
 3. **边界明确**：每个角色有独立的任务边界、能力边界、禁止项、记忆需求。
 4. **可迁移**：仓库内自带配置与运行目录，别人克隆后即可初始化。
+5. **上下文可追踪**：任务文件、spawn 指令、记忆写入统一携带 `taskId` / `sessionId`。
 
 ## 核心目录
 
@@ -24,7 +25,7 @@ multi-agent-orchestration/
 ├── live-executor.js           # 真实执行入口（生成 sessions_spawn 指令）
 ├── orchestrator-main.js       # 主编排器（串联全流程）
 ├── result-recovery.js         # 结果回收 + 依赖检查 + 状态汇总
-├── task-analyzer.js           # 任务复杂度分析引擎
+├── task-analyzer.cjs          # 任务复杂度分析引擎
 ├── task-dispatcher.js         # 旧版任务分发器（兼容）
 └── ...
 ```
@@ -65,6 +66,7 @@ multi-agent-orchestration/
 ```bash
 git clone https://github.com/asunoiwin/multi-agent-orchestration.git
 cd multi-agent-orchestration
+npm install
 ```
 
 ### 2. 初始化运行目录
@@ -99,16 +101,22 @@ cp -r hooks/multi-agent-orchestrator ~/.openclaw/hooks/
 ### 5. 验证
 ```bash
 # 分析一个复杂任务
-node live-executor.js "先调研方案，然后实现 demo，最后做代码审查"
+npm run smoke
 
 # 应输出包含 spawnNow / spawnLater 的 JSON
+```
+
+如果你需要把主会话的 `sessionId` 传进编排链，可在运行前设置：
+
+```bash
+OPENCLAW_SESSION_ID=session-main-123 npm run smoke
 ```
 
 ## 使用
 
 ### 完整编排（推荐）
 ```bash
-node live-executor.js "先搜索最新的 AI 框架，然后写一个对比报告"
+npm run plan -- "先搜索最新的 AI 框架，然后写一个对比报告"
 ```
 
 输出包含：
@@ -161,6 +169,16 @@ node result-recovery.js <taskId>    # 按任务回收
 | 串行关键词 | +2 |
 
 阈值：≥3 分启用多 Agent。
+
+## 测试
+
+```bash
+# 生成复杂任务编排计划
+npm run smoke
+
+# 查看恢复汇总
+npm run recover
+```
 
 ---
 

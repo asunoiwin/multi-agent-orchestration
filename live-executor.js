@@ -39,7 +39,12 @@ function resolveAgent(roleId) {
 
 async function execute(taskText) {
   // Step 1: 生成编排计划
-  const result = await orchestrate(taskText, { verbose: false });
+  const result = await orchestrate(taskText, {
+    verbose: false,
+    context: {
+      sessionId: process.env.OPENCLAW_SESSION_ID || null
+    }
+  });
 
   if (result.mode === 'single') {
     return {
@@ -63,7 +68,12 @@ async function execute(taskText) {
       mode: resolved.mode || 'run',
       cleanup: resolved.cleanup || 'delete',
       runTimeoutSeconds: resolved.runTimeoutSeconds || 600,
-      task: inst.prompt
+      task: inst.prompt,
+      metadata: {
+        taskId: result.taskId,
+        sessionId: result.context?.sessionId || null,
+        roleId: inst.roleId
+      }
     });
   }
 
@@ -79,12 +89,18 @@ async function execute(taskText) {
         model: resolved.model,
         dependsOn: st.dependsOn,
         status: 'waiting',
-        prompt: buildAgentPrompt(st, { id: result.taskId, task: taskText, executionMode: result.plan.executionMode })
+        prompt: buildAgentPrompt(st, {
+          id: result.taskId,
+          context: result.context || {},
+          task: taskText,
+          executionMode: result.plan.executionMode
+        })
       };
     });
 
   const execution = {
     taskId: result.taskId,
+    context: result.context || {},
     mode: 'multi',
     executionMode: result.plan.executionMode,
     spawnNow: spawnCalls,

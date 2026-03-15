@@ -25,7 +25,7 @@ async function orchestrate(taskText, options = {}) {
   const log = options.verbose ? console.log : () => {};
   
   log('\n=== Step 1: Task Intake ===');
-  const intake = enqueue(taskText, options.source || 'manual');
+  const intake = enqueue(taskText, options.source || 'manual', options.context || {});
   log(`Task ID: ${intake.id}`);
   log(`Needs Multi-Agent: ${intake.payload.plan.needsMultiAgent}`);
   
@@ -69,6 +69,7 @@ async function orchestrate(taskText, options = {}) {
         },
         {
           id: intake.id,
+          context: intake.payload.context,
           task: taskText,
           executionMode: intake.payload.plan.executionMode
         }
@@ -80,7 +81,12 @@ async function orchestrate(taskText, options = {}) {
         model: 'minimax',
         task: `<see prompt above>`,
         cleanup: 'keep',
-        timeoutSeconds: 1800
+        timeoutSeconds: 1800,
+        metadata: {
+          taskId: intake.id,
+          sessionId: intake.payload.context?.sessionId || null,
+          roleId: agent.roleId,
+        }
       }
     };
     spawnInstructions.push(instruction);
@@ -90,6 +96,7 @@ async function orchestrate(taskText, options = {}) {
 
   return {
     taskId: intake.id,
+    context: intake.payload.context,
     mode: 'multi',
     plan: intake.payload.plan,
     allocation: taskAllocation,

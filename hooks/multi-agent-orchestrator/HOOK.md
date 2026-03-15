@@ -9,7 +9,7 @@
 - 复杂度：score ≥ 3
 
 ## 工作流程
-1. 分析任务复杂度（调用 `task-analyzer.js`）
+1. 分析任务复杂度（调用 `task-analyzer.cjs`）
 2. 如果 score ≥ 3，修改 prompt 强制主会话调用 orchestrator
 3. 如果 score < 3，放行给主会话处理
 
