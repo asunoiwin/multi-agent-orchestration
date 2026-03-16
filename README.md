@@ -1,15 +1,17 @@
 # Multi-Agent Orchestration System v3
 
-可迁移、可配置、动态角色池驱动的多 Agent 编排系统。
+可迁移、可配置、动态角色池驱动的多 Agent 编排系统，已补齐自动恢复、阶段推进、结果回收与稳定性回归测试。
 
 ## 设计目标
 
-1. **永久执行机制**：通过 Hook + Supervisor 触发，不依赖临时记忆。
+1. **持续执行机制**：通过任务分析、运行态恢复、watchdog 与 cron 组合推进，不依赖单次会话记忆。
 2. **动态角色池**：不是固定 researcher/builder/auditor，而是根据任务特征选择预配置角色，并支持同岗多人。
 3. **公司化协作**：支持 discovery / design / delivery / assurance 多阶段协作、同组讨论、同步点和交付接力。
 4. **边界明确**：每个角色有独立的任务边界、能力边界、禁止项、记忆需求。
 5. **可迁移**：仓库内自带配置与运行目录，别人克隆后即可初始化。
 6. **上下文可追踪**：任务文件、spawn 指令、记忆写入统一携带 `taskId` / `sessionId` / `workerId` / `teamId`。
+7. **可恢复**：丢失 runtime、已删除 session、假 running、stalled 任务都能重新纳入恢复链。
+8. **可验证**：仓库内置 smoke、e2e 与稳定性回归测试。
 
 ## 核心目录
 
@@ -36,9 +38,9 @@ multi-agent-orchestration/
 ```text
 用户任务
     ↓
-[Hook: multi-agent-orchestrator]  ← agent:bootstrap 时注入编排规则
+主会话（Jarvis）+ memory-enhanced 生命周期
     ↓
-主会话（Jarvis）判断复杂度
+任务分析器判断复杂度
     ↓
     ├─ 简单任务 → 直接处理
     └─ 复杂任务 → live-executor.js
@@ -57,6 +59,8 @@ multi-agent-orchestration/
     └─ Handoff Team     → doc synthesize 汇总交付
          ↓
     result-recovery.js → 回收结果 + 依赖推进 + 下一波员工解锁
+         ↓
+    orchestration-watchdog.js → 健康检查 / 自愈 / 重试 / runtime 收口
          ↓
     主会话汇总交付
 ```
@@ -87,17 +91,12 @@ mkdir -p runtime tasks
 }
 ```
 
-### 4. 安装 Hook（可选但推荐）
-```bash
-# 复制 hook 到 OpenClaw hooks 目录
-cp -r hooks/multi-agent-orchestrator ~/.openclaw/hooks/
+### 4. 推荐接入方式
+优先把它作为 OpenClaw 当前可生效生命周期的一部分接入，而不是单独依赖旧 hook loader。项目已经兼容：
 
-# 在 ~/.openclaw/openclaw.json 的 hooks.internal.entries 中添加：
-# "multi-agent-orchestrator": {
-#   "enabled": true,
-#   "path": "~/.openclaw/hooks/multi-agent-orchestrator"
-# }
-```
+- 主会话任务分析
+- `memory-enhanced` 的复杂任务路由注入
+- cron 巡检 / 回收 / 推进
 
 ### 5. 验证
 ```bash
@@ -189,6 +188,14 @@ node result-recovery.js <taskId>    # 按任务回收
 
 阈值：≥3 分启用多 Agent。
 
+## 稳定性特性
+
+- 支持 `.deleted.*` 子会话的结果回收
+- 支持 `running` 但无 session / 无进展 worker 的重试
+- 支持 runtime 丢失后的 rehydrate
+- 支持 stalled 生产任务重新进入恢复路径
+- 支持按任务意图筛掉 demo/verify backlog，避免污染生产队列
+
 ## 测试
 
 ```bash
@@ -200,6 +207,9 @@ npm run recover
 
 # 真实 OpenClaw 子 agent 端到端验证
 npm run e2e:subagent
+
+# 稳定性回归测试
+npm test
 ```
 
 `e2e:subagent` 会实际调用 `openclaw agent` 触发一次 `sessions_spawn`，等待 researcher 子 agent 产出结构化完成块，并校验 `taskId/workerId/status`。这条命令适合在发布前做回归验真。

@@ -2,30 +2,34 @@
 
 ## Summary
 
-- fixed CommonJS execution under OpenClaw root `type: module`
-- normalized task analyzer entry to `task-analyzer.cjs`
-- propagated `taskId` / `sessionId` through intake, planning, and spawn metadata
-- improved operator-facing docs and added repeatable smoke scripts
+- hardened multi-agent recovery, retry, and runtime cleanup
+- completed the `design -> delivery -> assurance` orchestration chain with real task validation
+- added watchdog-based self-healing and regression tests
+- updated operator-facing docs for publishable installation and validation
 
 ## Why
 
 This repository was close to publishable, but still had a few rough edges:
 
-- runtime entrypoints could break when executed inside an ESM parent workspace
-- task/session traceability was incomplete, which made memory integration weaker
-- the README did not clearly explain how to validate the project after clone
+- completed subagent sessions could be missed after `.deleted.*` rotation
+- stalled or fake-running workers could block later stages forever
+- runtime/task state could pollute the repository and obscure the actual source changes
+- the project lacked a stable regression test for the recovery path
 
 ## Validation
 
 ```bash
-node --check task-intake.js
-node --check orchestrator-main.js
+node --check result-recovery.js
 node --check supervisor-runner.js
-node --check live-executor.js
+node --check orchestration-watchdog.js
+node --check tests/stability-regression.test.js
 npm run smoke
+npm run e2e:subagent
+npm test
+openclaw config validate
 ```
 
 ## Follow-ups
 
-- add a real `sessions_spawn` integration harness for end-to-end spawn testing
-- persist subagent progress back into the shared memory layer automatically
+- publish a real GitHub PR against `main`
+- add more task fixtures for long-running delivery and audit chains
