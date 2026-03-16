@@ -2,15 +2,22 @@
 
 ## What this project is for
 
-This project helps OpenClaw decide when a task should stay in the main agent and when it should be split into specialized subagents.
+This project helps OpenClaw decide when a task should stay in the main agent and when it should be split into specialized subagents, teams, and sync checkpoints.
 
 ## Core flow
 
 1. `task-intake.js` creates a task record with `taskId` and optional `sessionId`
 2. `orchestrator-main.js` decides whether the task stays single-agent or becomes multi-agent
-3. `supervisor-runner.js` prepares role-specific spawn instructions
+3. `supervisor-runner.js` prepares worker-specific spawn instructions
 4. `live-executor.js` emits the calls that the main agent can translate into `sessions_spawn`
 5. `result-recovery.js` collects completion state and dependency progress
+
+## Collaboration model
+
+- `staffingPlan` decides how many employees each capability needs
+- `teams` groups employees by stage and collaboration mode
+- `syncPlan` defines standups, handoffs, and design/review checkpoints
+- `workerId` is the true dependency unit, so multiple people can share the same role archetype
 
 ## How it integrates with memory
 

@@ -1,0 +1,27 @@
+{
+  "recovery": {
+    "priority": ["active", "task", "session"],
+    "snapshotRetention": 5,
+    "fallbackEnabled": true,
+    "maxRecoveryAttempts": 3
+  },
+  "advance": {
+    "dependencyTimeoutMs": 1800000,
+    "lockTimeoutMs": 5000,
+    "autoAdvanceEnabled": true,
+    "stageOrder": ["discovery", "design", "delivery", "assurance"]
+  },
+  "result": {
+    "parsingStrategies": ["json-block", "inline-json", "keyword-extract"],
+    "truncationRecovery": true,
+    "confidenceThreshold": 0.7,
+    "summaryMaxLength": 4000
+  },
+  "health": {
+    "checkIntervalMs": 60000,
+    "autoHealEnabled": true,
+    "alertOnFailure": true,
+    "zombieTimeoutMs": 300000,
+    "maxRunningTimeMs": 3600000
+  }
+}

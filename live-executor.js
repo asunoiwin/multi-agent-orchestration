@@ -61,6 +61,7 @@ async function execute(taskText) {
     const resolved = resolveAgent(inst.roleId);
     spawnCalls.push({
       label: inst.label,
+      workerId: inst.spawnCall?.metadata?.workerId || inst.roleId,
       roleId: inst.roleId,
       title: inst.title,
       agentId: resolved.agentId,
@@ -72,7 +73,10 @@ async function execute(taskText) {
       metadata: {
         taskId: result.taskId,
         sessionId: result.context?.sessionId || null,
-        roleId: inst.roleId
+        workerId: inst.spawnCall?.metadata?.workerId || inst.roleId,
+        roleId: inst.roleId,
+        teamId: inst.spawnCall?.metadata?.teamId || null,
+        stage: inst.spawnCall?.metadata?.stage || null
       }
     });
   }
@@ -83,6 +87,7 @@ async function execute(taskText) {
     .map(st => {
       const resolved = resolveAgent(st.roleId);
       return {
+        workerId: st.workerId,
         roleId: st.roleId,
         title: st.title,
         agentId: resolved.agentId,
@@ -93,7 +98,8 @@ async function execute(taskText) {
           id: result.taskId,
           context: result.context || {},
           task: taskText,
-          executionMode: result.plan.executionMode
+          executionMode: result.plan.executionMode,
+          syncPlan: result.plan.syncPlan
         })
       };
     });
@@ -103,6 +109,9 @@ async function execute(taskText) {
     context: result.context || {},
     mode: 'multi',
     executionMode: result.plan.executionMode,
+    collaborationModel: result.plan.collaborationModel,
+    teams: result.plan.teams,
+    syncPlan: result.plan.syncPlan,
     spawnNow: spawnCalls,
     spawnLater: waitingRoles,
     totalAgents: spawnCalls.length + waitingRoles.length

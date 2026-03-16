@@ -80,7 +80,8 @@ async function autoExecute(taskText, context = {}) {
           label: agent.label,
           task: agent.task,
           cleanup: agent.cleanup,
-          runTimeoutSeconds: agent.runTimeoutSeconds
+          runTimeoutSeconds: agent.runTimeoutSeconds,
+          metadata: agent.metadata || {}
         });
         
         log(`✓ Spawned: ${agent.label}`);
@@ -159,9 +160,17 @@ async function progressNext(context = {}) {
           model: agent.model || 'minimax',
           mode: 'run',
           label: agent.label,
-          task: agent.task,
+          task: agent.prompt || agent.task,
           cleanup: 'delete',
-          runTimeoutSeconds: 600
+          runTimeoutSeconds: agent.runTimeoutSeconds || 600,
+          metadata: {
+            taskId: agent.taskId || null,
+            sessionId: agent.sessionId || null,
+            workerId: agent.workerId || null,
+            roleId: agent.roleId || null,
+            teamId: agent.teamId || null,
+            stage: agent.stage || null
+          }
         });
         
         log(`✓ Spawned: ${agent.label}`);

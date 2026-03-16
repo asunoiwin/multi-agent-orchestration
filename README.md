@@ -1,14 +1,15 @@
-# Multi-Agent Orchestration System v2
+# Multi-Agent Orchestration System v3
 
 可迁移、可配置、动态角色池驱动的多 Agent 编排系统。
 
 ## 设计目标
 
 1. **永久执行机制**：通过 Hook + Supervisor 触发，不依赖临时记忆。
-2. **动态角色池**：不是固定 researcher/builder/auditor，而是根据任务特征选择预配置角色。
-3. **边界明确**：每个角色有独立的任务边界、能力边界、禁止项、记忆需求。
-4. **可迁移**：仓库内自带配置与运行目录，别人克隆后即可初始化。
-5. **上下文可追踪**：任务文件、spawn 指令、记忆写入统一携带 `taskId` / `sessionId`。
+2. **动态角色池**：不是固定 researcher/builder/auditor，而是根据任务特征选择预配置角色，并支持同岗多人。
+3. **公司化协作**：支持 discovery / design / delivery / assurance 多阶段协作、同组讨论、同步点和交付接力。
+4. **边界明确**：每个角色有独立的任务边界、能力边界、禁止项、记忆需求。
+5. **可迁移**：仓库内自带配置与运行目录，别人克隆后即可初始化。
+6. **上下文可追踪**：任务文件、spawn 指令、记忆写入统一携带 `taskId` / `sessionId` / `workerId` / `teamId`。
 
 ## 核心目录
 
@@ -44,18 +45,18 @@ multi-agent-orchestration/
          ↓
     task-intake.js → 生成任务文件
          ↓
-    supervisor-runner.js → 分配角色 + 生成 spawn 指令
+    supervisor-runner.js → 分配员工实例 + 生成 spawn 指令
          ↓
     sessions_spawn → 创建真实 subagent
          ↓
-    [Agent 池]
-    ├─ web-researcher   → agentId: researcher
-    ├─ code-implementer → agentId: builder
-    ├─ quality-auditor  → agentId: auditor
-    ├─ doc-synthesizer  → agentId: researcher
-    └─ data-analyst     → agentId: researcher
+    [协作团队]
+    ├─ Discovery Team   → 多名 research / data 成员 roundtable
+    ├─ Design Team      → supervisor + architect 做 design review
+    ├─ Delivery Team    → 多名 implementer / operator 并行 swarm
+    ├─ Assurance Team   → auditor + test engineer 做 peer review
+    └─ Handoff Team     → doc synthesize 汇总交付
          ↓
-    result-recovery.js → 回收结果 + 依赖推进
+    result-recovery.js → 回收结果 + 依赖推进 + 下一波员工解锁
          ↓
     主会话汇总交付
 ```
@@ -103,7 +104,7 @@ cp -r hooks/multi-agent-orchestrator ~/.openclaw/hooks/
 # 分析一个复杂任务
 npm run smoke
 
-# 应输出包含 spawnNow / spawnLater 的 JSON
+# 应输出包含 teams / syncPlan / spawnNow / spawnLater 的 JSON
 ```
 
 如果你需要把主会话的 `sessionId` 传进编排链，可在运行前设置：
@@ -120,9 +121,11 @@ npm run plan -- "先搜索最新的 AI 框架，然后写一个对比报告"
 ```
 
 输出包含：
+- `teams`: 协作团队与成员实例
+- `syncPlan`: 团队同步点与交接目标
 - `spawnNow`: 立即需要创建的 agent（含 agentId、prompt、model）
 - `spawnLater`: 等待依赖完成后创建的 agent
-- `executionMode`: serial / parallel
+- `executionMode`: single / hybrid / parallel
 
 ### 单步使用
 ```bash
@@ -154,9 +157,25 @@ node result-recovery.js <taskId>    # 按任务回收
 | memory | 工作记忆需求 |
 | lifecycle | persistent / ephemeral |
 
-内置 6 个角色：supervisor、web-researcher、code-implementer、quality-auditor、doc-synthesizer、data-analyst。
+内置角色池包括：
+- `supervisor`
+- `solution-architect`
+- `web-researcher`
+- `code-implementer`
+- `quality-auditor`
+- `test-engineer`
+- `doc-synthesizer`
+- `data-analyst`
+- `os-operator`
 
 可随时在 `agent-pool.json` 中新增角色，并在 `agent-mapping.json` 中映射到真实 agentId。
+
+## 新版协作模型
+
+- 一个任务会先被拆成 `staffingPlan`，再生成 `teams`、`syncPlan` 和 `subtasks`。
+- `workerId` 代表真实员工实例，不再把整个岗位压成一个角色。
+- 同组员工会在 prompt 里看到 `Coworkers`、`Collaboration Mode` 和相关 `Sync Points`。
+- 依赖推进基于 `workerId`，所以可以支持同岗多人、跨组协作和分阶段解锁。
 
 ## 复杂度评分
 
@@ -178,8 +197,13 @@ npm run smoke
 
 # 查看恢复汇总
 npm run recover
+
+# 真实 OpenClaw 子 agent 端到端验证
+npm run e2e:subagent
 ```
+
+`e2e:subagent` 会实际调用 `openclaw agent` 触发一次 `sessions_spawn`，等待 researcher 子 agent 产出结构化完成块，并校验 `taskId/workerId/status`。这条命令适合在发布前做回归验真。
 
 ---
 
-版本：v2.1.0
+版本：v3.0.0
