@@ -1,6 +1,10 @@
 {
   "recovery": {
-    "priority": ["active", "task", "session"],
+    "priority": [
+      "active",
+      "task",
+      "session"
+    ],
     "snapshotRetention": 5,
     "fallbackEnabled": true,
     "maxRecoveryAttempts": 3
@@ -9,10 +13,19 @@
     "dependencyTimeoutMs": 1800000,
     "lockTimeoutMs": 5000,
     "autoAdvanceEnabled": true,
-    "stageOrder": ["discovery", "design", "delivery", "assurance"]
+    "stageOrder": [
+      "discovery",
+      "design",
+      "delivery",
+      "assurance"
+    ]
   },
   "result": {
-    "parsingStrategies": ["json-block", "inline-json", "keyword-extract"],
+    "parsingStrategies": [
+      "json-block",
+      "inline-json",
+      "keyword-extract"
+    ],
     "truncationRecovery": true,
     "confidenceThreshold": 0.7,
     "summaryMaxLength": 4000
@@ -23,5 +36,37 @@
     "alertOnFailure": true,
     "zombieTimeoutMs": 300000,
     "maxRunningTimeMs": 3600000
+  },
+  "dependencyCycle": {
+    "detectEnabled": true,
+    "autoBreak": true
+  },
+  "circuitBreaker": {
+    "enabled": true,
+    "failureThreshold": 3,
+    "resetTimeoutMs": 300000
+  },
+  "alert": {
+    "enabled": true,
+    "channels": [
+      "webhook"
+    ],
+    "webhookMethod": "POST",
+    "levels": {
+      "critical": {
+        "enabled": true
+      },
+      "warning": {
+        "enabled": true
+      },
+      "info": {
+        "enabled": false
+      }
+    }
+  },
+  "audit": {
+    "enabled": true,
+    "retentionDays": 30,
+    "logDir": "logs/audit"
   }
 }

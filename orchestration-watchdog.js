@@ -9,6 +9,7 @@ const {
   syncActiveAgentsFromSessions
 } = require('./result-recovery');
 const { cleanupRuntime } = require('./cleanup-runtime');
+const { sendAlertSync, alertDependencyCycle } = require('./modules/alert-manager');
 const ROOT = __dirname;
 const RUNTIME_DIR = path.join(ROOT, 'runtime');
 const STATE_FILE = path.join(RUNTIME_DIR, 'orchestration-watchdog-state.json');
@@ -256,9 +257,140 @@ function autoHeal(issues) {
   return results;
 }
 
+/**
+ * Detect dependency cycles in the active agents graph
+ * Uses DFS to detect cycles in the dependsOn relationship
+ * @param {Array} agents - Agent list (optional, defaults to active-agents.json)
+ * @returns {Object} { hasCycle: boolean, cycles: string[][], broken: string[][] }
+ */
+function detectDependencyCycle(agents = null) {
+  const stabilityConfig = readJson(path.join(ROOT, 'config', 'stability.json'), {
+    dependencyCycle: { detectEnabled: true, autoBreak: true }
+  });
+  
+  if (!stabilityConfig.dependencyCycle?.detectEnabled) {
+    return { hasCycle: false, cycles: [], broken: [], reason: 'disabled' };
+  }
+  
+  const active = agents || readJson(ACTIVE_FILE, []);
+  
+  // Build adjacency list: workerId -> dependencies
+  const graph = new Map();
+  const nodeMap = new Map(); // workerId/roleId/label -> canonical workerId
+  
+  for (const agent of active) {
+    const workerId = agent.workerId;
+    if (!graph.has(workerId)) {
+      graph.set(workerId, new Set());
+    }
+    
+    // Add mapping for all possible identifiers
+    if (agent.roleId) nodeMap.set(agent.roleId, workerId);
+    if (agent.label) nodeMap.set(agent.label, workerId);
+    
+    // Add dependencies
+    if (agent.dependsOn && Array.isArray(agent.dependsOn)) {
+      for (const depId of agent.dependsOn) {
+        const canonicalDep = nodeMap.get(depId) || depId;
+        graph.get(workerId).add(canonicalDep);
+      }
+    }
+  }
+  
+  // DFS cycle detection
+  const visited = new Set();
+  const recursionStack = new Set();
+  const cycles = [];
+  
+  function dfs(node, path) {
+    visited.add(node);
+    recursionStack.add(node);
+    path.push(node);
+    
+    const deps = graph.get(node) || new Set();
+    for (const dep of deps) {
+      if (!visited.has(dep)) {
+        const result = dfs(dep, [...path]);
+        if (result) return result;
+      } else if (recursionStack.has(dep)) {
+        // Found cycle
+        const cycleStart = path.indexOf(dep);
+        const cycle = path.slice(cycleStart);
+        cycle.push(dep); // Close the cycle
+        cycles.push(cycle);
+        return cycle;
+      }
+    }
+    
+    recursionStack.delete(node);
+    return null;
+  }
+  
+  for (const node of graph.keys()) {
+    if (!visited.has(node)) {
+      dfs(node, []);
+    }
+  }
+  
+  // If cycles detected, try to break them
+  const broken = [];
+  if (cycles.length > 0 && stabilityConfig.dependencyCycle?.autoBreak) {
+    // Send alert for each cycle
+    for (const cycle of cycles) {
+      sendAlertSync('critical', 'dependency_cycle', {
+        cycle,
+        message: `Dependency cycle: ${cycle.join(' → ')}`
+      });
+    }
+    
+    // Auto-break: remove the weakest dependency (last in dependsOn array)
+    for (const cycle of cycles) {
+      // Find the agent that has the last dependency in the cycle
+      const cycleSet = new Set(cycle);
+      for (const agent of active) {
+        if (agent.dependsOn && agent.dependsOn.length > 0) {
+          const lastDep = agent.dependsOn[agent.dependsOn.length - 1];
+          const canonicalLastDep = nodeMap.get(lastDep) || lastDep;
+          
+          if (cycleSet.has(agent.workerId) && cycleSet.has(canonicalLastDep)) {
+            // Remove this dependency to break the cycle
+            const oldDeps = [...agent.dependsOn];
+            agent.dependsOn = agent.dependsOn.filter(d => d !== lastDep);
+            agent.updatedAt = new Date().toISOString();
+            agent.result = {
+              ...agent.result,
+              cycleBroken: true,
+              brokenDependency: lastDep,
+              originalCycle: cycle
+            };
+            broken.push({
+              agent: agent.workerId,
+              removedDependency: lastDep,
+              originalCycle: cycle
+            });
+            break; // Only break one edge per cycle
+          }
+        }
+      }
+    }
+    
+    if (broken.length > 0) {
+      writeJson(ACTIVE_FILE, active);
+    }
+  }
+  
+  return {
+    hasCycle: cycles.length > 0,
+    cycles,
+    broken,
+    detectedAt: new Date().toISOString()
+  };
+}
+
 module.exports = {
   main,
   buildSpawnPayload,
   healthCheck,
-  autoHeal
+  autoHeal,
+  detectDependencyCycle
 };

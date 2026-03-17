@@ -1,6 +1,6 @@
-# Multi-Agent Orchestration System v3
+# OpenClaw Multi-Agent Plugin v3
 
-可迁移、可配置、动态角色池驱动的多 Agent 编排系统，已补齐自动恢复、阶段推进、结果回收与稳定性回归测试。
+作为 OpenClaw 扩展主动加载的多 Agent 编排插件，支持动态角色池、自动恢复、阶段推进、结果回收与稳定性回归测试。
 
 ## 设计目标
 
@@ -38,7 +38,9 @@ multi-agent-orchestration/
 ```text
 用户任务
     ↓
-主会话（Jarvis）+ memory-enhanced 生命周期
+OpenClaw 插件加载器
+    ↓
+openclaw-multi-agent.before_agent_start
     ↓
 任务分析器判断复杂度
     ↓
@@ -92,7 +94,7 @@ mkdir -p runtime tasks
 ```
 
 ### 4. 推荐接入方式
-优先把它作为 OpenClaw 当前可生效生命周期的一部分接入，而不是单独依赖旧 hook loader。项目已经兼容：
+当前推荐把它作为 OpenClaw 扩展插件接入，而不是继续依赖旧 hook loader。项目已经兼容：
 
 - 主会话任务分析
 - `memory-enhanced` 的复杂任务路由注入

@@ -12,6 +12,9 @@ const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
 const STATE_FILE = path.join(RUNTIME_DIR, 'supervisor-state.json');
 const BRIEF_DIR = path.join(RUNTIME_DIR, 'task-briefs');
 
+// Import alert manager
+const { sendAlertSync, alertCircuitBreaker } = require('./modules/alert-manager');
+
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
   return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -571,6 +574,142 @@ function triggerNextStage(taskId, currentStage) {
   return { triggered: true, nextStage, taskId };
 }
 
+/**
+ * Circuit Breaker - tracks consecutive failures and triggers circuit break
+ * @param {Object} config - Stability config (optional)
+ * @returns {Object} { tripped: string[], checked: number }
+ */
+function checkCircuitBreaker(config = null) {
+  const stabilityConfig = config || readJson(path.join(ROOT, 'config', 'stability.json'), {
+    circuitBreaker: { enabled: true, failureThreshold: 3, resetTimeoutMs: 300000 }
+  });
+  
+  if (!stabilityConfig.circuitBreaker?.enabled) {
+    return { tripped: [], checked: 0, reason: 'disabled' };
+  }
+  
+  const threshold = stabilityConfig.circuitBreaker?.failureThreshold || 3;
+  const active = readJson(ACTIVE_FILE, []);
+  const tripped = [];
+  
+  for (const agent of active) {
+    // Skip already broken/completed agents
+    if (agent.status === 'completed' || agent.status === 'broken') continue;
+    
+    // Check consecutive failures
+    const failures = agent.failureCount || 0;
+    if (failures >= threshold) {
+      // Trip the circuit breaker
+      agent.status = 'broken';
+      agent.result = {
+        ...agent.result,
+        circuitTripped: true,
+        tripReason: 'consecutive_failures',
+        failureCount: failures,
+        trippedAt: new Date().toISOString()
+      };
+      agent.updatedAt = new Date().toISOString();
+      tripped.push(agent.workerId);
+      
+      // Send alert
+      sendAlertSync('warning', 'circuit_breaker', {
+        agent: agent.label,
+        workerId: agent.workerId,
+        failureCount: failures,
+        threshold,
+        action: 'tripped'
+      });
+    }
+  }
+  
+  if (tripped.length > 0) {
+    writeJson(ACTIVE_FILE, active);
+  }
+  
+  return { tripped, checked: active.length };
+}
+
+/**
+ * Record a failure for an agent (call on task failure)
+ * @param {string} workerId - Agent worker ID
+ * @returns {Object} { success: boolean, failureCount: number }
+ */
+function recordFailure(workerId) {
+  const active = readJson(ACTIVE_FILE, []);
+  const agent = active.find(a => a.workerId === workerId);
+  
+  if (!agent) {
+    return { success: false, error: 'agent_not_found' };
+  }
+  
+  agent.failureCount = (agent.failureCount || 0) + 1;
+  agent.lastFailureAt = new Date().toISOString();
+  agent.updatedAt = new Date().toISOString();
+  
+  writeJson(ACTIVE_FILE, active);
+  
+  return { success: true, failureCount: agent.failureCount };
+}
+
+/**
+ * Record a success - resets failure count
+ * @param {string} workerId - Agent worker ID
+ * @returns {Object} { success: boolean }
+ */
+function recordSuccess(workerId) {
+  const active = readJson(ACTIVE_FILE, []);
+  const agent = active.find(a => a.workerId === workerId);
+  
+  if (!agent) {
+    return { success: false, error: 'agent_not_found' };
+  }
+  
+  agent.failureCount = 0;
+  agent.lastSuccessAt = new Date().toISOString();
+  agent.updatedAt = new Date().toISOString();
+  
+  writeJson(ACTIVE_FILE, active);
+  
+  return { success: true };
+}
+
+/**
+ * Manually reset circuit breaker for an agent
+ * @param {string} workerId - Agent worker ID
+ * @param {string} reason - Optional reason for reset
+ * @returns {Object} { success: boolean }
+ */
+function resetCircuitBreaker(workerId, reason = 'manual') {
+  const active = readJson(ACTIVE_FILE, []);
+  const agent = active.find(a => a.workerId === workerId);
+  
+  if (!agent) {
+    return { success: false, error: 'agent_not_found' };
+  }
+  
+  agent.status = 'waiting';
+  agent.failureCount = 0;
+  agent.circuitResetAt = new Date().toISOString();
+  agent.circuitResetReason = reason;
+  agent.updatedAt = new Date().toISOString();
+  agent.result = {
+    ...agent.result,
+    circuitReset: true,
+    resetReason: reason
+  };
+  
+  writeJson(ACTIVE_FILE, active);
+  
+  // Send alert
+  sendAlertSync('info', 'circuit_breaker_reset', {
+    agent: agent.label,
+    workerId,
+    reason
+  });
+  
+  return { success: true };
+}
+
 if (require.main === module) {
   const result = supervisorRunOnce();
   console.log(JSON.stringify(result, null, 2));
@@ -600,5 +739,10 @@ module.exports = {
   // Phase 2 P1: Stage Advance Enhancement
   deterministicAdvance,
   checkDependencyWithTimeout,
-  triggerNextStage
+  triggerNextStage,
+  // Circuit Breaker
+  checkCircuitBreaker,
+  recordFailure,
+  recordSuccess,
+  resetCircuitBreaker
 };

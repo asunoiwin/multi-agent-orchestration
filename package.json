@@ -1,9 +1,10 @@
 {
-  "name": "multi-agent-orchestration",
+  "name": "openclaw-multi-agent",
   "version": "2.1.1",
   "description": "Task-oriented multi-agent orchestration for OpenClaw with task/session traceability",
   "private": true,
   "type": "commonjs",
+  "main": "src/index.js",
   "scripts": {
     "analyze": "node task-analyzer.cjs",
     "plan": "node live-executor.js",
@@ -11,5 +12,38 @@
     "smoke": "node live-executor.js \"先调研方案，然后实现 demo，最后做代码审查并输出交付说明\"",
     "e2e:subagent": "node e2e-subagent.js",
     "test": "node tests/stability-regression.test.js"
+  },
+  "files": [
+    "src",
+    "config",
+    "agents",
+    "docs",
+    "demo",
+    "tests",
+    "auto-executor.js",
+    "cleanup-runtime.js",
+    "dynamic-orchestrator.js",
+    "e2e-subagent.js",
+    "integration-helper.js",
+    "live-executor.js",
+    "orchestration-watchdog.js",
+    "orchestrator-main.js",
+    "orchestrator.js",
+    "progress-monitor.js",
+    "quality-evaluator.js",
+    "result-recovery.js",
+    "supervisor-runner.js",
+    "task-analyzer.cjs",
+    "task-dispatcher.js",
+    "task-intake.js",
+    "README.md",
+    "WIKI.md",
+    "PULL_REQUEST.md",
+    "openclaw.plugin.json"
+  ],
+  "openclaw": {
+    "extensions": [
+      "./src/index.js"
+    ]
   }
 }
