@@ -9,6 +9,7 @@ const runtimeDir = path.join(os.homedir(), '.openclaw', 'workspace', '.openclaw'
 const decisionPath = path.join(runtimeDir, 'multi-agent-last-decision.json');
 const routingPath = path.join(runtimeDir, 'multi-agent-routing.json');
 const executionPath = path.join(runtimeDir, 'multi-agent-execution.json');
+const meetingPath = path.join(runtimeDir, 'multi-agent-meeting.json');
 
 let analyzeTask = null;
 let planTask = null;
@@ -34,6 +35,7 @@ function shouldSkip(prompt) {
   if (/\[Subagent Context\]|\[Subagent Task\]:|^# Role:/m.test(prompt)) return true;
   if (/\[cron:[^\]]+\]|你是多 agent 编排调度器|你是任务巡检员|你是每日任务汇总助手/i.test(prompt)) return true;
   if (/^HEARTBEAT/i.test(prompt)) return true;
+  if (/^Continue where you left off\./i.test(prompt)) return true;
   return false;
 }
 
@@ -94,6 +96,21 @@ function buildExecutionSnapshot(plan = null) {
       id: item.id || 'sync',
       kind: item.kind || 'sync',
     })),
+  };
+}
+
+function buildMeetingArtifact(prompt, analysis, plan) {
+  const meetingPlan = plan?.meetingPlan || null;
+  return {
+    generated_at: new Date().toISOString(),
+    request: prompt,
+    analysis: {
+      decision: analysis?.decision || 'single',
+      score: Number(analysis?.score ?? analysis?.total_score ?? 0),
+      score_breakdown: analysis?.score_breakdown || {}
+    },
+    meetingPlan: meetingPlan || { enabled: false, mode: 'none', participants: [] },
+    status: meetingPlan?.enabled ? 'pending_deliberation' : 'not_required'
   };
 }
 
@@ -198,6 +215,7 @@ const plugin = {
         );
 
         fs.writeFileSync(executionPath, JSON.stringify(snapshot, null, 2));
+        fs.writeFileSync(meetingPath, JSON.stringify(buildMeetingArtifact(prompt, analysis, plan), null, 2));
 
         api.logger.info?.('[openclaw-multi-agent] injecting multi-agent routing context');
         return {

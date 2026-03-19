@@ -9,6 +9,7 @@ const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
 const AGENTS_ROOT = path.join(process.env.HOME || '', '.openclaw', 'agents');
 const MAPPING_FILE = path.join(ROOT, 'config', 'agent-mapping.json');
 const { buildAgentPrompt } = require('./supervisor-runner');
+const { scoreRole, getRoleProfile, getResourceBudget } = require('./modules/reputation-engine');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
@@ -276,6 +277,7 @@ function syncActiveAgentsFromSessions() {
 
     if (summarySource.summary?.text) {
       const summaryText = summarySource.summary.text;
+      const previousStatus = agent.status;
       const structuredStatus = typeof match.completion?.status === 'string'
         ? match.completion.status.trim().toLowerCase()
         : null;
@@ -294,13 +296,30 @@ function syncActiveAgentsFromSessions() {
         agent.status = nextStatus;
         changed += 1;
       }
+      if (['completed', 'failed'].includes(nextStatus) && agent.roleId) {
+        const alreadyScored = agent?.reputationState?.scoredStatus === nextStatus;
+        if (!alreadyScored || previousStatus !== nextStatus) {
+          const scoreEvent = nextStatus === 'completed' ? 'completed' : 'failed';
+          const scoreReceipt = scoreRole(agent.roleId, scoreEvent, {
+            reason: structuredStatus || nextStatus
+          });
+          agent.reputationState = {
+            ...(agent.reputationState || {}),
+            scoredStatus: nextStatus,
+            scoredAt: new Date().toISOString(),
+            receipt: scoreReceipt
+          };
+          changed += 1;
+        }
+      }
       agent.result = {
         ...(agent.result || {}),
         sessionFile: activeMatch.file,
         recoveredAt: new Date().toISOString(),
         summary: summaryText,
         stopReason: summarySource.summary.stopReason || null,
-        structuredCompletion: match.completion || null
+        structuredCompletion: match.completion || null,
+        reputation: agent.reputationState?.receipt || agent.result?.reputation || null
       };
     } else if (['spawning', 'waiting'].includes(agent.status)) {
       agent.status = 'running';
@@ -413,6 +432,16 @@ function normalizeActiveAgents(active) {
       if (next.task !== subtask.description) {
         next = next === agent ? { ...agent } : next;
         next.task = subtask.description;
+        changed = true;
+      }
+      if (JSON.stringify(next.reputation || null) !== JSON.stringify(subtask.reputation || null)) {
+        next = next === agent ? { ...agent } : next;
+        next.reputation = subtask.reputation || null;
+        changed = true;
+      }
+      if (JSON.stringify(next.resourceBudget || null) !== JSON.stringify(subtask.resourceBudget || null)) {
+        next = next === agent ? { ...agent } : next;
+        next.resourceBudget = subtask.resourceBudget || null;
         changed = true;
       }
       if (taskContext) {

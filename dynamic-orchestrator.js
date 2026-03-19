@@ -15,16 +15,17 @@ function detectFeatures(task) {
   const text = task || '';
   const explicitDocs = /文档|手册|报告|README|Wiki|总结|说明书|交付说明|决策记录|知识沉淀/i.test(text);
   const deliveryNarrative = /总结|报告|说明|整理|沉淀|手册|交付/i.test(text);
+  const deliberation = /讨论|辩论|评审|会议|圆桌|panel|约束|候选方案|推荐方案|权衡|tradeoff|比较方案|形成推荐/i.test(text);
   return {
-    research: /搜索|调研|分析|研究|对比|查找|了解|收集|查询|验证方案|资料|排查/.test(text),
-    planning: /设计|规划|架构|方案|拆分|切分|路线图|技术选型|边界|推进/.test(text),
+    research: /搜索|调研|分析|研究|对比|查找|了解|收集|查询|验证方案|资料|排查/.test(text) || deliberation,
+    planning: /设计|规划|架构|方案|拆分|切分|路线图|技术选型|边界|推进|决策|推荐/.test(text) || deliberation,
     implementation: /开发|编写|实现|写代码|创建|制作|修改|改|补测试|补充实现|构建|配置|安装|修复|重构|优化|稳定|恢复|回收|demo|示例|样例|完整示例|例子|代码示例|插件/.test(text),
-    audit: /检查|审查|验证|测试|审计|评估|排查|lint|安全|质量检查|回归/.test(text),
+    audit: /检查|审查|验证|测试|审计|评估|排查|lint|安全|质量检查|回归|风险/.test(text) || deliberation,
     documentation: explicitDocs || (deliveryNarrative && /输出|编写|生成|整理|沉淀|补齐/.test(text)),
     explicitDocumentation: explicitDocs,
     data: /数据|统计|指标|表格|分析数据|分析指标|dataset|metrics?/i.test(text),
     maintenance: /稳定|恢复|阶段推进|推进|结果回收|回收|状态恢复|状态同步|收口|闭环|巡检|watchdog|runtime|orchestration|编排/i.test(text),
-    coordination: /协调|统筹|监督|监工|跨团队|跨组|多人协作|多员工|对齐|同步会|standup|review meeting|分派/.test(text),
+    coordination: /协调|统筹|监督|监工|跨团队|跨组|多人协作|多员工|对齐|同步会|standup|review meeting|分派/.test(text) || deliberation,
     parallel: /同时|并行|分别|各自/.test(text),
     serial: /先|然后|之后|接着|最后|基于|根据|再/.test(text)
   };
@@ -420,7 +421,7 @@ function planTask(task) {
     uncertainty: /可能|也许|探索|尝试|不确定|方案/.test(task || '') ? 2 : 0,
     risk: /重构|迁移|恢复|权限|稳定|生产|高风险/.test(task || '') ? 2 : 0
   };
-  const meetingPlan = needsMultiAgent && shouldUseMeeting(analysisLike, { needsMultiAgent })
+  const meetingPlan = needsMultiAgent && shouldUseMeeting(analysisLike, { needsMultiAgent }, undefined, task)
     ? buildMeetingPlan(task, analysisLike, { needsMultiAgent }, pool)
     : {
         enabled: false,

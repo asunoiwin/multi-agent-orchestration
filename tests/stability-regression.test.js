@@ -78,6 +78,10 @@ function testMeetingTriggerHeuristic() {
   };
   assert.strictEqual(shouldUseMeeting(analysis, { needsMultiAgent: true }), true);
   assert.strictEqual(shouldUseMeeting({ score: 3 }, { needsMultiAgent: false }), false);
+  assert.strictEqual(
+    shouldUseMeeting({ score: 4, uncertainty: 0, risk: 0, domains: 1, structure: 1 }, { needsMultiAgent: true }, undefined, '请先讨论约束、候选方案、风险与推荐方案'),
+    true
+  );
 }
 
 function testReputationBudget() {
