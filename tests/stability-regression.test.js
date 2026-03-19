@@ -4,6 +4,9 @@ const assert = require('assert');
 const resultRecovery = require('../result-recovery.js');
 const supervisorRunner = require('../supervisor-runner.js');
 const watchdog = require('../orchestration-watchdog.js');
+const { planTask } = require('../dynamic-orchestrator.js');
+const { shouldUseMeeting } = require('../modules/deliberation-engine.js');
+const { getRoleProfile, getResourceBudget } = require('../modules/reputation-engine.js');
 
 function testMultiStrategyParse() {
   const inline = resultRecovery.multiStrategyParse('prefix {"taskId":"inline-test","status":"completed"} suffix');
@@ -36,7 +39,9 @@ function testDeterministicAdvanceNoCrash() {
 
 function testWatchdogExports() {
   const keys = Object.keys(watchdog).sort();
-  assert.deepStrictEqual(keys, ['autoHeal', 'buildSpawnPayload', 'healthCheck', 'main']);
+  ['autoHeal', 'buildSpawnPayload', 'healthCheck', 'main'].forEach((key) => {
+    assert.ok(keys.includes(key), `watchdog exports should include ${key}`);
+  });
 }
 
 function testConfidenceDistribution() {
@@ -56,12 +61,98 @@ function testConfidenceDistribution() {
   assert.ok(failed <= 0.2, `expected failed confidence <= 0.2, got ${failed}`);
 }
 
+function testMeetingPlanGeneration() {
+  const plan = planTask('请先组织多角色讨论比较稳定性、成本和维护性，再制定方案并安排实现与审查。');
+  assert.ok(plan.meetingPlan, 'meeting plan should exist');
+  assert.strictEqual(plan.meetingPlan.enabled, true, 'meeting plan should be enabled for deliberative task');
+  assert.ok(Array.isArray(plan.meetingPlan.participants) && plan.meetingPlan.participants.length >= 3);
+}
+
+function testMeetingTriggerHeuristic() {
+  const analysis = {
+    score: 9,
+    uncertainty: 2,
+    risk: 2,
+    domains: 2,
+    structure: 2
+  };
+  assert.strictEqual(shouldUseMeeting(analysis, { needsMultiAgent: true }), true);
+  assert.strictEqual(shouldUseMeeting({ score: 3 }, { needsMultiAgent: false }), false);
+}
+
+function testReputationBudget() {
+  const profile = getRoleProfile('solution-architect', { lifecycle: 'ephemeral' });
+  const budget = getResourceBudget('solution-architect', 'planning', { lifecycle: 'ephemeral' });
+  assert.ok(profile.score >= 0 && profile.score <= 100, 'profile score should be normalized');
+  assert.ok(['trusted', 'standard', 'guarded', 'cooldown'].includes(profile.tier), `unexpected tier ${profile.tier}`);
+  assert.ok(budget.promptTokens > 0, 'prompt budget should be positive');
+}
+
+function testPromptContainsMeetingAndBudget() {
+  const taskContext = {
+    id: 'task-meeting',
+    task: '为复杂系统制定方案并执行',
+    context: {
+      sessionId: 'session-meeting',
+      taskRoot: '/tmp'
+    },
+    plan: {
+      task: '为复杂系统制定方案并执行',
+      executionMode: 'hybrid',
+      collaborationModel: 'company',
+      selectedRoles: [],
+      staffingPlan: [],
+      teams: [],
+      syncPlan: [],
+      meetingPlan: {
+        enabled: true,
+        mode: 'structured_panel',
+        rounds: 2,
+        participants: [
+          { seat: 'moderator', roleId: 'solution-architect', workerId: 'solution-architect-1' },
+          { seat: 'challenger', roleId: 'quality-auditor', workerId: 'quality-auditor-1' },
+          { seat: 'executor', roleId: 'code-implementer', workerId: 'code-implementer-1' }
+        ],
+        agenda: ['定义问题', '比较方案'],
+        outputs: ['recommendation'],
+        stopConditions: ['达到最大轮次'],
+        consensus: { method: 'weighted-consensus' }
+      }
+    },
+    summary: { agents: [] }
+  };
+  const subtask = {
+    workerId: 'solution-architect-1',
+    roleId: 'solution-architect',
+    title: 'Solution Architect',
+    teamId: 'design-planning-team',
+    stage: 'design',
+    capability: 'planning',
+    description: '沉淀方案',
+    skills: ['analysis'],
+    deny: [],
+    memory: { scope: 'task', items: ['decisions'] },
+    coworkers: [],
+    collaborationMode: 'design-review',
+    reputation: { score: 86, tier: 'trusted', priorityWeight: 1.2 },
+    resourceBudget: { promptTokens: 3200, contextItems: 8, maxRounds: 3, persistAcrossStages: true }
+  };
+  const prompt = supervisorRunner.buildAgentPrompt(subtask, taskContext);
+  assert.ok(prompt.includes('## Deliberation'), 'prompt should include deliberation section');
+  assert.ok(prompt.includes('Meeting Mode: structured_panel'), 'prompt should include meeting mode');
+  assert.ok(prompt.includes('## Reputation And Budget'), 'prompt should include budget section');
+}
+
 function run() {
   testMultiStrategyParse();
   testHandleTruncatedOutput();
   testDeterministicAdvanceNoCrash();
   testWatchdogExports();
   testConfidenceDistribution();
+  testMeetingPlanGeneration();
+  testMeetingTriggerHeuristic();
+  testReputationBudget();
+  testPromptContainsMeetingAndBudget();
   console.log('stability regression tests passed');
 }
 

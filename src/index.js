@@ -67,12 +67,22 @@ function summarizeTeams(plan = null) {
   });
 }
 
+function summarizeMeeting(plan = null) {
+  const meetingPlan = plan?.meetingPlan || null;
+  if (!meetingPlan?.enabled) return 'disabled';
+  const participants = Array.isArray(meetingPlan.participants)
+    ? meetingPlan.participants.map((seat) => `${seat.seat}:${seat.roleId}`).join(' | ')
+    : 'none';
+  return `${meetingPlan.mode || 'structured_panel'} / rounds=${meetingPlan.rounds || 0} / participants=${participants}`;
+}
+
 function buildExecutionSnapshot(plan = null) {
   const teams = Array.isArray(plan?.teams) ? plan.teams : [];
   const syncPlan = Array.isArray(plan?.syncPlan) ? plan.syncPlan : [];
   return {
     generated_at: new Date().toISOString(),
     executionMode: plan?.executionMode || 'single',
+    meetingMode: plan?.meetingPlan?.enabled ? plan.meetingPlan.mode : 'none',
     teams: teams.map((team) => ({
       stage: team.stage || 'stage',
       capability: team.capability || 'capability',
@@ -105,12 +115,22 @@ function buildContext(prompt, analysis, plan) {
   if (teamSummary.length > 0) {
     lines.push(`- teams: ${teamSummary.join(' | ')}`);
   }
+  if (plan?.meetingPlan?.enabled) {
+    lines.push(`- meeting: ${summarizeMeeting(plan)}`);
+  }
 
   lines.push('- Use multi-agent orchestration proactively for this request unless a concrete blocker prevents it.');
   lines.push(`- Inspect ${routingPath} before acting.`);
   lines.push(`- Use ${executionPath} as the quick execution snapshot.`);
+  if (plan?.meetingPlan?.enabled) {
+    lines.push('- Before execution, respect the meeting plan: converge on a recommendation, capture risks, then hand off to execution teams.');
+    lines.push('- Treat meeting output as a structured decision artifact, not free-form brainstorming.');
+  }
   lines.push('- Spawn or simulate worker/team execution instead of handling all stages sequentially.');
   lines.push('- If you still stay single-agent, continue autonomously and state the blocker briefly without asking the user to choose.');
+  lines.push('- After each substantial tool/action phase, convert progress into a short human-readable status update instead of silently stopping.');
+  lines.push('- If execution is interrupted or resumed after restart, first explain what has been recovered, what stage is active now, and what the next concrete step is.');
+  lines.push('- Only use NO_REPLY when there is truly no new progress, no recovery event, and no next-step information worth surfacing.');
 
   return {
     context: lines.join('\n'),
@@ -147,8 +167,10 @@ const plugin = {
               needsMultiAgent,
               decision: analysis?.decision || null,
               categories: analysis?.categories || [],
+              meeting: analysis?.meeting || null,
               request_preview: prompt.slice(0, 200),
               teams: summarizeTeams(plan),
+              meetingSummary: summarizeMeeting(plan),
             },
             null,
             2

@@ -16,6 +16,17 @@ const SCORE_THRESHOLDS = {
   multi: 11
 };
 
+function scoreDeliberationNeed(scores) {
+  let score = 0;
+  if ((scores.stages || 0) >= 3) score += 1;
+  if ((scores.domains || 0) >= 2) score += 1;
+  if ((scores.structure || 0) >= 2) score += 1;
+  if ((scores.uncertainty || 0) >= 2) score += 2;
+  if ((scores.risk || 0) >= 2) score += 2;
+  if ((scores.parallelism || 0) >= 2) score += 1;
+  return Math.min(score, 3);
+}
+
 // ============================================================================
 // 评分函数
 // ============================================================================
@@ -27,11 +38,11 @@ function scoreStages(input) {
   let score = 0;
   
   // 明确阶段词
-  if (/调研|研究|分析|对比|评估|搜索|排查/.test(input)) score++;
-  if (/设计|规划|方案|选型|拆分|切分/.test(input)) score++;
-  if (/实现|开发|编写|构建|写|创建|优化|修复|加固/.test(input)) score++;
-  if (/测试|验证|检查|回归|审查|评审|稳定/.test(input)) score++;
-  if (/恢复|推进|回收|交付|说明|总结|文档/.test(input)) score++;
+  if (/调研|研究|分析|对比|评估|搜索|排查|讨论|比较|权衡/.test(input)) score++;
+  if (/设计|规划|方案|选型|拆分|切分|制定|决策|路线/.test(input)) score++;
+  if (/实现|开发|编写|构建|写|创建|优化|修复|加固|执行|落地/.test(input)) score++;
+  if (/测试|验证|检查|回归|审查|评审|稳定|review/.test(input)) score++;
+  if (/恢复|推进|回收|交付|说明|总结|文档|handoff|移交/.test(input)) score++;
   
   // 明确多阶段
   if (/第一.{1,10}第二|首先.{1,10}然后|分析.{1,20}实现|恢复.{1,20}推进|修复.{1,20}(验证|交付)/.test(input)) score = Math.min(score + 1, 3);
@@ -67,7 +78,7 @@ function scoreStructure(input) {
   if (clauseCount >= 7) score += 1;
   if (listCount >= 2) score += 1;
 
-  const actionCount = (input.match(/需要|负责|完成|产出|整理|修复|验证|设计|实现|调研|交付|恢复|推进|回收|优化|稳定/g) || []).length;
+  const actionCount = (input.match(/需要|负责|完成|产出|整理|修复|验证|设计|实现|调研|交付|恢复|推进|回收|优化|稳定|讨论|比较|制定|拆解|权衡/g) || []).length;
   if (actionCount >= 4) score += 1;
 
   return Math.min(score, 3);
@@ -78,12 +89,13 @@ function scoreStructure(input) {
  */
 function scoreDomains(input) {
   const domains = {
-    research: /调研|研究|搜索|分析|排查/,
-    dev: /开发|编码|实现|构建|优化|修复/,
+    research: /调研|研究|搜索|分析|排查|比较|权衡/,
+    dev: /开发|编码|实现|构建|优化|修复|落地/,
     security: /安全|权限|审计|加固/,
-    infra: /部署|运维|配置|服务器|云|恢复|推进|编排|回收/,
+    infra: /部署|运维|配置|服务器|云|恢复|推进|编排|回收|稳定性|维护性/,
     data: /数据库|存储|数据|查询|状态/,
-    docs: /文档|说明|注释|交付|总结/
+    docs: /文档|说明|注释|交付|总结/,
+    planning: /方案|规划|设计|拆解|决策|路线|成本|效率/
   };
   
   let count = 0;
@@ -107,7 +119,7 @@ function scoreUncertainty(input) {
   if (/什么|哪个|如何|怎么做/.test(input)) score += 1;
   
   // 需要探索
-  if (/试试|尝试|探索|研究/.test(input)) score += 1;
+  if (/试试|尝试|探索|研究|比较|权衡|方案/.test(input)) score += 1;
   
   return Math.min(score, 3);
 }
@@ -153,7 +165,7 @@ function scoreToolLoad(input) {
 // ============================================================================
 
 function calculateScores(input, context = {}) {
-  return {
+  const scores = {
     stages: scoreStages(input),
     parallelism: scoreParallelism(input),
     structure: scoreStructure(input),
@@ -162,6 +174,8 @@ function calculateScores(input, context = {}) {
     risk: scoreRisk(input, context),
     tool_load: scoreToolLoad(input)
   };
+  scores.deliberation = scoreDeliberationNeed(scores);
+  return scores;
 }
 
 function totalScore(scores) {
@@ -170,6 +184,10 @@ function totalScore(scores) {
 
 function decide(scores) {
   const total = totalScore(scores);
+
+  if ((scores.deliberation || 0) >= 2 && scores.stages >= 2) {
+    return scores.parallelism >= 1 || scores.domains >= 2 ? 'multi' : 'light_multi';
+  }
 
   // 多阶段 + 跨领域任务不应落回 single。
   if (scores.stages >= 3 && scores.domains >= 2) {
@@ -191,6 +209,35 @@ function decide(scores) {
     return 'light_multi';
   }
   return 'multi';
+}
+
+function buildMeetingRecommendation(scores, decision) {
+  if (decision === 'single') {
+    return {
+      enabled: false,
+      reason: 'simple-task',
+      rounds: 0
+    };
+  }
+  if ((scores.deliberation || 0) >= 2) {
+    return {
+      enabled: true,
+      reason: 'high-ambiguity-or-risk',
+      rounds: scores.risk >= 2 ? 3 : 2
+    };
+  }
+  if (scores.structure >= 2 && scores.stages >= 3) {
+    return {
+      enabled: true,
+      reason: 'multi-stage-structured-task',
+      rounds: 2
+    };
+  }
+  return {
+    enabled: false,
+    reason: 'direct-execution-sufficient',
+    rounds: 0
+  };
 }
 
 // ============================================================================
@@ -280,22 +327,25 @@ async function analyzeTask(userInput, context = {}) {
   
   if (llmResult && llmResult.confidence >= 0.7) {
     // 使用 LLM 判断（高置信度）
+    const llmScores = {
+      stages: llmResult.stages,
+      parallelism: llmResult.parallelism,
+      structure: llmResult.structure,
+      domains: llmResult.domains,
+      uncertainty: llmResult.uncertainty,
+      risk: llmResult.risk,
+      tool_load: llmResult.tool_load,
+      deliberation: scoreDeliberationNeed(llmResult)
+    };
     return {
       decision: llmResult.decision,
       total_score: llmResult.total_score,
-      score_breakdown: {
-        stages: llmResult.stages,
-        parallelism: llmResult.parallelism,
-        structure: llmResult.structure,
-        domains: llmResult.domains,
-        uncertainty: llmResult.uncertainty,
-        risk: llmResult.risk,
-        tool_load: llmResult.tool_load
-      },
+      score_breakdown: llmScores,
+      meeting: buildMeetingRecommendation(llmScores, llmResult.decision),
       rationale: llmResult.rationale || `LLM综合评分${llmResult.total_score}`,
-      agents: generateAgents(llmResult.decision, scores),
+      agents: generateAgents(llmResult.decision, llmScores),
       merge_plan: getMergePlan(llmResult.decision),
-      guardrails: getGuardrails(scores),
+      guardrails: getGuardrails(llmScores),
       missing_info_questions: [],
       confidence: llmResult.confidence
     };
@@ -306,6 +356,7 @@ async function analyzeTask(userInput, context = {}) {
     decision: basicDecision,
     total_score: basicTotal,
     score_breakdown: scores,
+    meeting: buildMeetingRecommendation(scores, basicDecision),
     rationale: getRationale(scores, basicDecision),
     agents: generateAgents(basicDecision, scores),
     merge_plan: getMergePlan(basicDecision),

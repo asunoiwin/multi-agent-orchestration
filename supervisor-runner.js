@@ -52,6 +52,33 @@ function extractDependencyHandoffs(taskContext, subtask) {
     });
 }
 
+function formatMeetingSection(taskContext, subtask) {
+  const meetingPlan = taskContext?.plan?.meetingPlan || taskContext?.meetingPlan || null;
+  if (!meetingPlan?.enabled) {
+    return ['Meeting Mode: disabled'];
+  }
+
+  const participants = Array.isArray(meetingPlan.participants) ? meetingPlan.participants : [];
+  const currentSeat = participants.find((seat) => seat.workerId === subtask.workerId || seat.roleId === subtask.roleId) || null;
+  const agenda = Array.isArray(meetingPlan.agenda) ? meetingPlan.agenda : [];
+  const outputs = Array.isArray(meetingPlan.outputs) ? meetingPlan.outputs : [];
+  const stopConditions = Array.isArray(meetingPlan.stopConditions) ? meetingPlan.stopConditions : [];
+  const consensus = meetingPlan.consensus || {};
+
+  return [
+    `Meeting Mode: ${meetingPlan.mode || 'structured_panel'}`,
+    `Meeting Rounds: ${meetingPlan.rounds || 0}`,
+    `Meeting Seat: ${currentSeat ? `${currentSeat.seat} (${currentSeat.roleId})` : 'execution-only participant'}`,
+    participants.length > 0
+      ? `Meeting Participants: ${participants.map((seat) => `${seat.seat}:${seat.roleId}`).join(', ')}`
+      : `Meeting Participants: none`,
+    agenda.length > 0 ? `Meeting Agenda: ${agenda.join(' | ')}` : `Meeting Agenda: none`,
+    outputs.length > 0 ? `Meeting Outputs: ${outputs.join(' | ')}` : `Meeting Outputs: none`,
+    stopConditions.length > 0 ? `Meeting Stop Conditions: ${stopConditions.join(' | ')}` : `Meeting Stop Conditions: none`,
+    consensus?.method ? `Meeting Consensus: ${consensus.method}` : `Meeting Consensus: weighted consensus`
+  ];
+}
+
 function resolveAgent(roleId) {
   const mapping = readJson(MAPPING_FILE, { mapping: {}, defaults: {} });
   const mapped = mapping.mapping?.[roleId];
@@ -134,6 +161,9 @@ function buildAgentPrompt(subtask, taskContext) {
   const coworkers = Array.isArray(subtask.coworkers) ? subtask.coworkers : [];
   const relevantSyncs = syncPlan.filter(point => (point.participants || []).includes(subtask.workerId));
   const dependencyHandoffs = extractDependencyHandoffs(taskContext, subtask);
+  const reputation = subtask.reputation || {};
+  const resourceBudget = subtask.resourceBudget || {};
+  const meetingSection = formatMeetingSection(taskContext, subtask);
   const lines = [
     `# Role: ${subtask.title}`,
     ``,
@@ -170,6 +200,18 @@ function buildAgentPrompt(subtask, taskContext) {
     relevantSyncs.length > 0
       ? `Sync Points: ${relevantSyncs.map(point => `${point.id}:${point.kind}`).join(', ')}`
       : `Sync Points: none`,
+    ``,
+    `## Reputation And Budget`,
+    `Reputation Score: ${Number(reputation.score ?? 70)}`,
+    `Reputation Tier: ${reputation.tier || 'standard'}`,
+    `Priority Weight: ${Number(reputation.priorityWeight ?? 1)}`,
+    `Prompt Token Budget: ${Number(resourceBudget.promptTokens ?? 0)}`,
+    `Context Window Hint: ${Number(resourceBudget.contextItems ?? 0)}`,
+    `Max Rounds: ${Number(resourceBudget.maxRounds ?? 1)}`,
+    `Can Persist Across Stages: ${resourceBudget.persistAcrossStages ? 'yes' : 'no'}`,
+    ``,
+    `## Deliberation`,
+    ...meetingSection,
     ``,
     `## Upstream Handoff`,
     dependencyHandoffs.length > 0
@@ -209,6 +251,9 @@ function buildAgentPrompt(subtask, taskContext) {
     `15. Treat ${taskRoot} as the source-of-truth repository for this task; prefer reading and operating there instead of your role workspace`,
     `16. If you need to inspect files, start from ${taskRoot} and reference absolute paths in your output`,
     `17. Read ${briefPath} first when you need the authoritative task snapshot, team plan, or sync points`,
+    `18. If meeting mode is enabled and you are a meeting participant, answer in a decision-oriented style: constraints, options, risks, recommendation, then handoff`,
+    `19. Respect your prompt token budget by staying concise and role-focused; do not write long narrative unless your role is moderator or documentation`,
+    `20. If your reputation tier is guarded or cooldown, be extra conservative: avoid speculative tool use and prefer auditable outputs`,
     ``,
     `## Deliverable`,
     `Provide a clear summary of what you accomplished, any artifacts created, handoff notes for teammates, and next-step suggestions.`,
@@ -466,12 +511,20 @@ function deterministicAdvance(config = null) {
   let advanced = 0;
   
   for (const agent of waiting) {
-    const { ready, blocking } = checkDependencies(agent, active);
+    const dependencyState = checkDependencyWithTimeout(
+      agent,
+      active,
+      stabilityConfig.advance?.dependencyTimeoutMs || 1800000
+    );
+    const ready = Boolean(dependencyState.ready);
+    const blocking = Array.isArray(dependencyState.blocking) ? dependencyState.blocking : [];
     if (ready) {
       advanced += 1;
     } else {
       const timeout = stabilityConfig.advance?.dependencyTimeoutMs || 1800000;
-      for (const blockId of blocking) {
+      for (const blocked of blocking) {
+        const blockId = typeof blocked === 'string' ? blocked : blocked?.id;
+        if (!blockId) continue;
         const dep = active.find(a => 
           a.workerId === blockId || a.roleId === blockId || a.label === blockId
         );
@@ -538,6 +591,7 @@ function checkDependencyWithTimeout(agent, activeAgents, timeoutMs = 1800000) {
   
   return { 
     ready: blocking.length === 0, 
+    blocking,
     reason: blocking.length === 0 ? 'dependencies_met' : blocking.map(b => b.reason).join(',')
   };
 }

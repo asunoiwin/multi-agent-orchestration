@@ -128,12 +128,29 @@ function createTaskBriefPayload(payload, repoShape = summarizeRepoShape(payload?
     staffingPlan: Array.isArray(plan.staffingPlan) ? plan.staffingPlan : [],
     teams: Array.isArray(plan.teams) ? plan.teams : [],
     syncPlan: Array.isArray(plan.syncPlan) ? plan.syncPlan : [],
+    meetingPlan: plan.meetingPlan || {
+      enabled: false,
+      mode: 'none',
+      rounds: 0,
+      participants: [],
+      agenda: []
+    },
     keyPaths: repoShape.keyPaths,
     repoShape: {
       hasReadme: repoShape.hasReadme,
       hasPackageJson: repoShape.hasPackageJson,
       hasSourceTree: repoShape.hasSourceTree,
       hasRuntimeState: repoShape.hasRuntimeState
+    },
+    resourcePolicy: {
+      selectedRoles: Array.isArray(plan.selectedRoles)
+        ? plan.selectedRoles.map((role) => ({
+            id: role.id,
+            reputationScore: role.reputationScore ?? 70,
+            tiers: role.tiers || [],
+            averagePromptTokens: role.averagePromptTokens ?? 0
+          }))
+        : []
     },
     generatedAt: new Date().toISOString()
   };

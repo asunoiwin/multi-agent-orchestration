@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
+const { buildMeetingPlan, shouldUseMeeting } = require('./modules/deliberation-engine');
+const { getRoleProfile, getResourceBudget } = require('./modules/reputation-engine');
 
 const ROOT = __dirname;
 const POOL_FILE = path.join(ROOT, 'config', 'agent-pool.json');
@@ -215,6 +217,8 @@ function buildAssignments(task, capabilityNeeds, pool) {
       usageByRole[role.id] = (usageByRole[role.id] || 0) + 1;
       const instanceNumber = usageByRole[role.id];
       const workerId = `${role.id}-${instanceNumber}`;
+      const reputation = getRoleProfile(role.id, role);
+      const resourceBudget = getResourceBudget(role.id, need.capability, role);
       assignments.push({
         workerId,
         roleId: role.id,
@@ -230,7 +234,9 @@ function buildAssignments(task, capabilityNeeds, pool) {
         deny: role.deny,
         memory: role.memory,
         lifecycle: role.lifecycle,
-        triggerCapabilities: role.triggerCapabilities || []
+        triggerCapabilities: role.triggerCapabilities || [],
+        reputation,
+        resourceBudget
       });
     }
   }
@@ -328,7 +334,9 @@ function buildSubtasks(task, assignments, executionMode) {
       deny: item.deny,
       memory: item.memory,
       coworkers: item.coworkers,
-      lifecycle: item.lifecycle
+      lifecycle: item.lifecycle,
+      reputation: item.reputation,
+      resourceBudget: item.resourceBudget
     };
   });
 }
@@ -402,6 +410,31 @@ function planTask(task) {
   const enrichedAssignments = attachCollaborationMetadata(assignments, teams);
   const subtasks = buildSubtasks(task, enrichedAssignments, mode);
   const syncPlan = buildSyncPlan(teams, mode);
+  const analysisLike = {
+    score,
+    stages: features.serial ? 3 : 2,
+    parallelism: features.parallel ? 2 : 0,
+    structure: features.serial || features.parallel ? 2 : 1,
+    domains: ['research', 'planning', 'implementation', 'audit', 'documentation', 'data', 'maintenance']
+      .filter((key) => features[key]).length,
+    uncertainty: /可能|也许|探索|尝试|不确定|方案/.test(task || '') ? 2 : 0,
+    risk: /重构|迁移|恢复|权限|稳定|生产|高风险/.test(task || '') ? 2 : 0
+  };
+  const meetingPlan = needsMultiAgent && shouldUseMeeting(analysisLike, { needsMultiAgent })
+    ? buildMeetingPlan(task, analysisLike, { needsMultiAgent }, pool)
+    : {
+        enabled: false,
+        mode: 'none',
+        rounds: 0,
+        participants: [],
+        agenda: [],
+        decisionRule: 'direct-execution',
+        requiredOutputs: [],
+        stopConditions: [],
+        outputTemplate: {},
+        rationale: '任务可直接进入执行编排',
+        taskPreview: String(task || '').slice(0, 200)
+      };
   const roleSummary = new Map();
   for (const item of enrichedAssignments) {
     if (!roleSummary.has(item.roleId)) {
@@ -409,12 +442,18 @@ function planTask(task) {
         id: item.roleId,
         name: item.title.replace(/ #\d+$/, ''),
         instances: 0,
-        capabilities: new Set()
+        capabilities: new Set(),
+        reputationScores: [],
+        tiers: new Set(),
+        resourceBudgets: []
       });
     }
     const summary = roleSummary.get(item.roleId);
     summary.instances += 1;
     summary.capabilities.add(item.capability);
+    summary.reputationScores.push(Number(item.reputation?.score ?? 70));
+    summary.tiers.add(item.reputation?.tier || 'standard');
+    summary.resourceBudgets.push(Number(item.resourceBudget?.promptTokens ?? 0));
   }
 
   return {
@@ -429,11 +468,19 @@ function planTask(task) {
       id: item.id,
       name: item.name,
       instances: item.instances,
-      capabilities: Array.from(item.capabilities)
+      capabilities: Array.from(item.capabilities),
+      reputationScore: item.reputationScores.length > 0
+        ? Math.round(item.reputationScores.reduce((sum, value) => sum + value, 0) / item.reputationScores.length)
+        : 70,
+      tiers: Array.from(item.tiers),
+      averagePromptTokens: item.resourceBudgets.length > 0
+        ? Math.round(item.resourceBudgets.reduce((sum, value) => sum + value, 0) / item.resourceBudgets.length)
+        : 0
     })),
     staffingPlan: capabilityNeeds,
     teams: needsMultiAgent ? teams : [],
     syncPlan: needsMultiAgent ? syncPlan : [],
+    meetingPlan,
     executionMode: needsMultiAgent ? mode : 'single',
     collaborationModel: needsMultiAgent ? 'company' : 'solo',
     subtasks: needsMultiAgent ? subtasks : []
