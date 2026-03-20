@@ -6,7 +6,10 @@
     "xiaohongshu": ["小红书", "rednote", "种草", "笔记"],
     "weibo": ["微博", "热搜", "话题", "舆情"],
     "bilibili": ["b站", "哔哩哔哩", "bilibili", "视频"],
-    "forum": ["论坛", "贴吧", "reddit", "v2ex", "社区", "评论区"]
+    "zhihu": ["知乎", "问答", "专栏"],
+    "kuaishou": ["快手", "ks", "快手热视频"],
+    "tieba": ["贴吧", "百度贴吧", "吧友"],
+    "forum": ["论坛", "reddit", "v2ex", "社区", "评论区"]
   },
   "triggerKeywords": [
     "社媒",
@@ -18,7 +21,10 @@
     "视频信息",
     "达人",
     "笔记",
-    "讨论热度"
+    "讨论热度",
+    "评论区观点",
+    "用户反馈",
+    "社区讨论"
   ],
   "platformRoutes": {
     "weibo": {
@@ -45,6 +51,24 @@
       "sources": ["browser.bilibili.search", "browser.bilibili.detail"],
       "notes": "B 站优先浏览器检索和结构化提取。"
     },
+    "zhihu": {
+      "preferredMode": "browser",
+      "fallbackMode": "web_fetch",
+      "sources": ["browser.zhihu.search", "browser.zhihu.answer", "web_fetch.zhihu.page"],
+      "notes": "知乎优先浏览器搜索与回答页提取，必要时直接抓取网页。"
+    },
+    "kuaishou": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.kuaishou.search", "browser.kuaishou.detail"],
+      "notes": "快手优先浏览器检索和详情页提取。"
+    },
+    "tieba": {
+      "preferredMode": "browser",
+      "fallbackMode": "web_fetch",
+      "sources": ["browser.tieba.search", "browser.tieba.thread", "web_fetch.tieba.thread"],
+      "notes": "贴吧优先浏览器搜索和帖子页，必要时直接抓取帖子。"
+    },
     "forum": {
       "preferredMode": "browser",
       "fallbackMode": "web_fetch",
@@ -54,10 +78,22 @@
   },
   "defaultOutputs": [
     "source_inventory",
+    "collection_plan",
     "evidence_cards",
     "deduped_findings",
     "credibility_notes",
     "meeting_brief"
   ],
-  "maxEvidenceCards": 8
+  "maxEvidenceCards": 8,
+  "maxSourcesPerPlatform": 5,
+  "evidenceCardFields": [
+    "platform",
+    "title",
+    "author",
+    "published_at",
+    "url",
+    "excerpt",
+    "signals",
+    "credibility"
+  ]
 }

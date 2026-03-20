@@ -133,6 +133,8 @@ function createTaskBriefPayload(payload, repoShape = summarizeRepoShape(payload?
       mode: "none",
       platforms: [],
       routes: [],
+      collectionPlan: [],
+      evidenceSchema: [],
       outputs: []
     },
     meetingPlan: plan.meetingPlan || {

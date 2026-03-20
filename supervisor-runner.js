@@ -87,12 +87,18 @@ function formatIntelligenceSection(taskContext) {
 
   const routes = Array.isArray(intelligencePlan.routes) ? intelligencePlan.routes : [];
   const outputs = Array.isArray(intelligencePlan.outputs) ? intelligencePlan.outputs : [];
+  const collectionPlan = Array.isArray(intelligencePlan.collectionPlan) ? intelligencePlan.collectionPlan : [];
+  const evidenceSchema = Array.isArray(intelligencePlan.evidenceSchema) ? intelligencePlan.evidenceSchema : [];
   return [
     `Intelligence Mode: ${intelligencePlan.mode || 'multi-source-social-intel'}`,
     `Platforms: ${(intelligencePlan.platforms || []).join(', ') || 'none'}`,
     routes.length > 0
       ? `Routes: ${routes.map((route) => `${route.platform}:${route.preferredMode}->${route.fallbackMode}`).join(' | ')}`
       : `Routes: none`,
+    collectionPlan.length > 0
+      ? `Collection Plan: ${collectionPlan.map((item) => `${item.platform}[${item.maxSources}]`).join(' | ')}`
+      : `Collection Plan: none`,
+    evidenceSchema.length > 0 ? `Evidence Schema: ${evidenceSchema.join(', ')}` : `Evidence Schema: none`,
     outputs.length > 0 ? `Expected Intelligence Outputs: ${outputs.join(' | ')}` : `Expected Intelligence Outputs: none`,
     intelligencePlan.rationale ? `Rationale: ${intelligencePlan.rationale}` : `Rationale: none`
   ];

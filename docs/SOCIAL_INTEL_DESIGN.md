@@ -8,6 +8,9 @@ Add a dedicated `social-intel-researcher` role so multi-agent planning can colle
 - Douyin
 - Xiaohongshu
 - Bilibili
+- Zhihu
+- Kuaishou
+- Tieba
 - community/forum sources
 
 without forcing the generic `web-researcher` to own all social discovery work.
@@ -25,6 +28,9 @@ without forcing the generic `web-researcher` to own all social discovery work.
 - Douyin: browser first
 - Xiaohongshu: browser first
 - Bilibili: browser first
+- Zhihu: browser first, direct fetch fallback
+- Kuaishou: browser first
+- Tieba: browser first, direct fetch fallback
 - Forum/community: browser first, direct fetch fallback
 
 ## Output contract
@@ -32,10 +38,30 @@ without forcing the generic `web-researcher` to own all social discovery work.
 The social-intel layer should produce:
 
 - `source_inventory`
+- `collection_plan`
 - `evidence_cards`
 - `deduped_findings`
 - `credibility_notes`
 - `meeting_brief`
+
+Each evidence card should preserve:
+
+- `platform`
+- `title`
+- `author`
+- `published_at`
+- `url`
+- `excerpt`
+- `signals`
+- `credibility`
+
+## Acceptance criteria
+
+- planning detects social-intel tasks without degrading normal tasks
+- meeting mode prefers `social-intel-researcher` for the research seat
+- intelligence plans include explicit platform routes and collection limits
+- OneAPI smoke confirms `weibo` remains API-viable
+- non-API platforms remain on browser-first routing
 
 ## Why this path is preferred
 

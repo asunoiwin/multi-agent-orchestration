@@ -172,6 +172,8 @@ function testSocialIntelRouting() {
   assert.ok(plan.platforms.includes('weibo'), 'weibo should be included');
   assert.ok(plan.routes.some((route) => route.platform === 'weibo' && route.preferredMode === 'api'));
   assert.ok(plan.routes.some((route) => route.platform === 'douyin' && route.preferredMode === 'browser'));
+  assert.ok(Array.isArray(plan.collectionPlan) && plan.collectionPlan.length >= 3, 'collection plan should be present');
+  assert.ok(Array.isArray(plan.evidenceSchema) && plan.evidenceSchema.includes('url'), 'evidence schema should include url');
 }
 
 function testPlannerAssignsSocialIntelRole() {
@@ -179,6 +181,17 @@ function testPlannerAssignsSocialIntelRole() {
   assert.strictEqual(plan.intelligencePlan.enabled, true, 'planner should emit intelligence plan');
   assert.ok(plan.selectedRoles.some((role) => role.id === 'social-intel-researcher'), 'planner should include social-intel-researcher');
   assert.ok(plan.meetingPlan.participants.some((seat) => seat.roleId === 'social-intel-researcher'), 'meeting should prefer social-intel-researcher for research seat');
+}
+
+function testExpandedPlatformCoverage() {
+  const plan = buildIntelligencePlan(
+    '请汇总微博、抖音、小红书、B站、知乎、快手、贴吧对 OpenClaw 的讨论，并形成情报摘要',
+    { socialIntel: true },
+    { domains: 5 }
+  );
+  ['weibo', 'douyin', 'xiaohongshu', 'bilibili', 'zhihu', 'kuaishou', 'tieba'].forEach((platform) => {
+    assert.ok(plan.platforms.includes(platform), `${platform} should be included in expanded platform coverage`);
+  });
 }
 
 function run() {
@@ -193,6 +206,7 @@ function run() {
   testPromptContainsMeetingAndBudget();
   testSocialIntelRouting();
   testPlannerAssignsSocialIntelRole();
+  testExpandedPlatformCoverage();
   console.log('stability regression tests passed');
 }
 

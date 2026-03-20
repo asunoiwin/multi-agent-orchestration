@@ -48,6 +48,37 @@ function buildPlatformRoute(platform, policy = loadPolicy()) {
   };
 }
 
+function buildCollectionPlan(routes = [], policy = loadPolicy()) {
+  const maxSourcesPerPlatform = Number(policy.maxSourcesPerPlatform ?? 5);
+  return routes.map((route) => ({
+    platform: route.platform,
+    preferredMode: route.preferredMode,
+    fallbackMode: route.fallbackMode,
+    maxSources: maxSourcesPerPlatform,
+    steps: [
+      `discover:${route.platform}`,
+      `extract:${route.platform}`,
+      `normalize:${route.platform}`,
+      `dedupe:${route.platform}`
+    ],
+    sources: route.sources,
+    notes: route.notes
+  }));
+}
+
+function buildEvidenceSchema(policy = loadPolicy()) {
+  return Array.isArray(policy.evidenceCardFields) ? policy.evidenceCardFields : [
+    'platform',
+    'title',
+    'author',
+    'published_at',
+    'url',
+    'excerpt',
+    'signals',
+    'credibility'
+  ];
+}
+
 function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, policy = loadPolicy()) {
   const enabled = Boolean(policy.enabled) && (features.socialIntel || hasSocialIntent(taskText, policy));
   if (!enabled) {
@@ -56,6 +87,8 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
       platforms: [],
       routes: [],
       outputs: [],
+      collectionPlan: [],
+      evidenceSchema: [],
       rationale: '任务不需要额外的社媒情报层。'
     };
   }
@@ -64,6 +97,8 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
   const defaultPlatforms = explicitPlatforms.length > 0 ? explicitPlatforms : ['weibo', 'douyin', 'xiaohongshu'];
   const platforms = Array.from(new Set(defaultPlatforms));
   const routes = platforms.map((platform) => buildPlatformRoute(platform, policy));
+  const collectionPlan = buildCollectionPlan(routes, policy);
+  const evidenceSchema = buildEvidenceSchema(policy);
   const socialBreadth = Math.max(platforms.length, Number(analysis?.domains ?? 0) >= 3 ? 3 : platforms.length);
 
   return {
@@ -73,6 +108,8 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
     routes,
     outputs: Array.isArray(policy.defaultOutputs) ? policy.defaultOutputs : [],
     maxEvidenceCards: Number(policy.maxEvidenceCards ?? 8),
+    collectionPlan,
+    evidenceSchema,
     socialBreadth,
     rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。`
   };
@@ -82,5 +119,7 @@ module.exports = {
   loadPolicy,
   collectPlatformSignals,
   hasSocialIntent,
-  buildIntelligencePlan
+  buildIntelligencePlan,
+  buildCollectionPlan,
+  buildEvidenceSchema
 };
