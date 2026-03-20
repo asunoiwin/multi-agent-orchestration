@@ -16,7 +16,7 @@
     "moderator": ["solution-architect", "supervisor"],
     "challenger": ["quality-auditor", "test-engineer"],
     "executor": ["code-implementer", "os-operator"],
-    "research": ["web-researcher", "data-analyst"],
+    "research": ["social-intel-researcher", "web-researcher", "data-analyst"],
     "recorder": ["doc-synthesizer"]
   },
   "requiredOutputs": [

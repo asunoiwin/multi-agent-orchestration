@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildMeetingPlan, shouldUseMeeting } = require('./modules/deliberation-engine');
 const { getRoleProfile, getResourceBudget } = require('./modules/reputation-engine');
+const { buildIntelligencePlan, hasSocialIntent } = require('./modules/social-intel-engine');
 
 const ROOT = __dirname;
 const POOL_FILE = path.join(ROOT, 'config', 'agent-pool.json');
@@ -16,6 +17,7 @@ function detectFeatures(task) {
   const explicitDocs = /文档|手册|报告|README|Wiki|总结|说明书|交付说明|决策记录|知识沉淀/i.test(text);
   const deliveryNarrative = /总结|报告|说明|整理|沉淀|手册|交付/i.test(text);
   const deliberation = /讨论|辩论|评审|会议|圆桌|panel|约束|候选方案|推荐方案|权衡|tradeoff|比较方案|形成推荐/i.test(text);
+  const socialIntel = hasSocialIntent(text);
   return {
     research: /搜索|调研|分析|研究|对比|查找|了解|收集|查询|验证方案|资料|排查/.test(text) || deliberation,
     planning: /设计|规划|架构|方案|拆分|切分|路线图|技术选型|边界|推进|决策|推荐/.test(text) || deliberation,
@@ -24,6 +26,7 @@ function detectFeatures(task) {
     documentation: explicitDocs || (deliveryNarrative && /输出|编写|生成|整理|沉淀|补齐/.test(text)),
     explicitDocumentation: explicitDocs,
     data: /数据|统计|指标|表格|分析数据|分析指标|dataset|metrics?/i.test(text),
+    socialIntel,
     maintenance: /稳定|恢复|阶段推进|推进|结果回收|回收|状态恢复|状态同步|收口|闭环|巡检|watchdog|runtime|orchestration|编排/i.test(text),
     coordination: /协调|统筹|监督|监工|跨团队|跨组|多人协作|多员工|对齐|同步会|standup|review meeting|分派/.test(text) || deliberation,
     parallel: /同时|并行|分别|各自/.test(text),
@@ -37,7 +40,7 @@ function complexityScore(task, features) {
   if ((task || '').length > 100) score += 1;
   const structureSignals = ((task || '').match(/[、，,；;]/g) || []).length;
   if (structureSignals >= 2) score += 1;
-  const count = ['research', 'planning', 'implementation', 'audit', 'documentation', 'data', 'maintenance']
+  const count = ['research', 'planning', 'implementation', 'audit', 'documentation', 'data', 'socialIntel', 'maintenance']
     .filter(k => features[k]).length;
   score += count;
   if (features.parallel) score += 2;
@@ -91,6 +94,16 @@ function deriveCapabilityNeeds(task, features, score) {
       count: highComplexity ? 2 : 1,
       collaborationMode: 'paired-analysis',
       objective: '拆分数据分析、指标解释与结构化结论'
+    });
+  }
+
+  if (features.socialIntel) {
+    needs.push({
+      capability: 'social-intel',
+      stage: 'discovery',
+      count: 1,
+      collaborationMode: 'evidence-scout',
+      objective: '从社媒、论坛和热点入口抽取结构化情报，形成可引用证据卡片'
     });
   }
 
@@ -189,6 +202,7 @@ function rankRoleForCapability(role, capability) {
   if (capability === 'planning' && role.id === 'solution-architect') return 4;
   if (capability === 'planning' && role.id === 'supervisor') return 1;
   if (capability === 'coordination' && role.id === 'supervisor') return 5;
+  if (capability === 'social-intel' && role.id === 'social-intel-researcher') return 5;
   if (caps.includes(capability)) return 3;
   if (capability === 'research' && caps.includes('comparison')) return 2;
   if (capability === 'implementation' && caps.includes('configuration')) return 2;
@@ -416,11 +430,13 @@ function planTask(task) {
     stages: features.serial ? 3 : 2,
     parallelism: features.parallel ? 2 : 0,
     structure: features.serial || features.parallel ? 2 : 1,
-    domains: ['research', 'planning', 'implementation', 'audit', 'documentation', 'data', 'maintenance']
+    domains: ['research', 'planning', 'implementation', 'audit', 'documentation', 'data', 'socialIntel', 'maintenance']
       .filter((key) => features[key]).length,
     uncertainty: /可能|也许|探索|尝试|不确定|方案/.test(task || '') ? 2 : 0,
-    risk: /重构|迁移|恢复|权限|稳定|生产|高风险/.test(task || '') ? 2 : 0
+    risk: /重构|迁移|恢复|权限|稳定|生产|高风险/.test(task || '') ? 2 : 0,
+    socialSignals: features.socialIntel ? 1 : 0
   };
+  const intelligencePlan = buildIntelligencePlan(task, features, analysisLike);
   const meetingPlan = needsMultiAgent && shouldUseMeeting(analysisLike, { needsMultiAgent }, undefined, task)
     ? buildMeetingPlan(task, analysisLike, { needsMultiAgent }, pool)
     : {
@@ -481,6 +497,7 @@ function planTask(task) {
     staffingPlan: capabilityNeeds,
     teams: needsMultiAgent ? teams : [],
     syncPlan: needsMultiAgent ? syncPlan : [],
+    intelligencePlan,
     meetingPlan,
     executionMode: needsMultiAgent ? mode : 'single',
     collaborationModel: needsMultiAgent ? 'company' : 'solo',

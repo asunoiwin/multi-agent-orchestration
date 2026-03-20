@@ -7,6 +7,7 @@ const watchdog = require('../orchestration-watchdog.js');
 const { planTask } = require('../dynamic-orchestrator.js');
 const { shouldUseMeeting } = require('../modules/deliberation-engine.js');
 const { getRoleProfile, getResourceBudget } = require('../modules/reputation-engine.js');
+const { buildIntelligencePlan, hasSocialIntent } = require('../modules/social-intel-engine.js');
 
 function testMultiStrategyParse() {
   const inline = resultRecovery.multiStrategyParse('prefix {"taskId":"inline-test","status":"completed"} suffix');
@@ -108,6 +109,17 @@ function testPromptContainsMeetingAndBudget() {
       staffingPlan: [],
       teams: [],
       syncPlan: [],
+      intelligencePlan: {
+        enabled: true,
+        mode: 'multi-source-social-intel',
+        platforms: ['weibo', 'douyin', 'xiaohongshu'],
+        routes: [
+          { platform: 'weibo', preferredMode: 'api', fallbackMode: 'browser' },
+          { platform: 'douyin', preferredMode: 'browser', fallbackMode: 'browser' }
+        ],
+        outputs: ['source_inventory', 'meeting_brief'],
+        rationale: '需要补充社媒情报'
+      },
       meetingPlan: {
         enabled: true,
         mode: 'structured_panel',
@@ -144,7 +156,29 @@ function testPromptContainsMeetingAndBudget() {
   const prompt = supervisorRunner.buildAgentPrompt(subtask, taskContext);
   assert.ok(prompt.includes('## Deliberation'), 'prompt should include deliberation section');
   assert.ok(prompt.includes('Meeting Mode: structured_panel'), 'prompt should include meeting mode');
+  assert.ok(prompt.includes('## Intelligence'), 'prompt should include intelligence section');
+  assert.ok(prompt.includes('Platforms: weibo, douyin, xiaohongshu'), 'prompt should include platform routes');
   assert.ok(prompt.includes('## Reputation And Budget'), 'prompt should include budget section');
+}
+
+function testSocialIntelRouting() {
+  assert.strictEqual(hasSocialIntent('请先分析微博、抖音和小红书关于 OpenClaw 的讨论热度'), true);
+  const plan = buildIntelligencePlan(
+    '请汇总微博、抖音和小红书关于 OpenClaw 的讨论热度与评论趋势',
+    { socialIntel: true },
+    { domains: 3 }
+  );
+  assert.strictEqual(plan.enabled, true, 'intelligence plan should be enabled');
+  assert.ok(plan.platforms.includes('weibo'), 'weibo should be included');
+  assert.ok(plan.routes.some((route) => route.platform === 'weibo' && route.preferredMode === 'api'));
+  assert.ok(plan.routes.some((route) => route.platform === 'douyin' && route.preferredMode === 'browser'));
+}
+
+function testPlannerAssignsSocialIntelRole() {
+  const plan = planTask('请先分析微博、抖音、小红书关于 OpenClaw 的舆情，再让多角色讨论后给出推荐方案。');
+  assert.strictEqual(plan.intelligencePlan.enabled, true, 'planner should emit intelligence plan');
+  assert.ok(plan.selectedRoles.some((role) => role.id === 'social-intel-researcher'), 'planner should include social-intel-researcher');
+  assert.ok(plan.meetingPlan.participants.some((seat) => seat.roleId === 'social-intel-researcher'), 'meeting should prefer social-intel-researcher for research seat');
 }
 
 function run() {
@@ -157,6 +191,8 @@ function run() {
   testMeetingTriggerHeuristic();
   testReputationBudget();
   testPromptContainsMeetingAndBudget();
+  testSocialIntelRouting();
+  testPlannerAssignsSocialIntelRole();
   console.log('stability regression tests passed');
 }
 

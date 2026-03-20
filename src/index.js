@@ -85,6 +85,7 @@ function buildExecutionSnapshot(plan = null) {
     generated_at: new Date().toISOString(),
     executionMode: plan?.executionMode || 'single',
     meetingMode: plan?.meetingPlan?.enabled ? plan.meetingPlan.mode : 'none',
+    intelligenceMode: plan?.intelligencePlan?.enabled ? plan.intelligencePlan.mode : 'none',
     teams: teams.map((team) => ({
       stage: team.stage || 'stage',
       capability: team.capability || 'capability',
@@ -131,6 +132,9 @@ function buildContext(prompt, analysis, plan) {
   }
   if (teamSummary.length > 0) {
     lines.push(`- teams: ${teamSummary.join(' | ')}`);
+  }
+  if (plan?.intelligencePlan?.enabled) {
+    lines.push(`- intelligence: ${(plan.intelligencePlan.platforms || []).join(', ')} / ${plan.intelligencePlan.mode}`);
   }
   if (plan?.meetingPlan?.enabled) {
     lines.push(`- meeting: ${summarizeMeeting(plan)}`);

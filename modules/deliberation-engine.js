@@ -47,13 +47,14 @@ function candidateScore(role, seat, analysis = {}) {
   const challengeBias = seat.seat === 'challenger' && ['quality-auditor', 'test-engineer'].includes(role.id) ? 2 : 0;
   const executionBias = seat.seat === 'executor' && ['code-implementer', 'os-operator'].includes(role.id) ? 2 : 0;
   const researchBias = seat.seat === 'research' && ['web-researcher', 'data-analyst'].includes(role.id) ? 2 : 0;
-  return capabilityMatch + planningBias + challengeBias + executionBias + researchBias + (profile.priorityBoost || 0) + profile.voteWeight;
+  const socialBias = seat.seat === 'research' && Number(analysis?.socialSignals ?? 0) > 0 && role.id === 'social-intel-researcher' ? 4 : 0;
+  return capabilityMatch + planningBias + challengeBias + executionBias + researchBias + socialBias + (profile.priorityBoost || 0) + profile.voteWeight;
 }
 
-function selectSeat(pool, seat, usedRoles) {
+function selectSeat(pool, seat, usedRoles, analysis = {}) {
   const candidates = pool.roles
     .filter((role) => !usedRoles.has(role.id))
-    .map((role) => ({ role, score: candidateScore(role, seat) }))
+    .map((role) => ({ role, score: candidateScore(role, seat, analysis) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
   return candidates[0]?.role || null;
@@ -76,7 +77,7 @@ function buildMeetingPlan(task, analysis, plan, pool, policy = loadPolicy()) {
   const usedRoles = new Set();
   const participants = [];
   for (const seat of seats) {
-    const role = selectSeat(pool, seat, usedRoles);
+    const role = selectSeat(pool, seat, usedRoles, analysis);
     if (!role) continue;
     usedRoles.add(role.id);
     const profile = getRoleProfile(role.id, role);

@@ -79,6 +79,25 @@ function formatMeetingSection(taskContext, subtask) {
   ];
 }
 
+function formatIntelligenceSection(taskContext) {
+  const intelligencePlan = taskContext?.plan?.intelligencePlan || taskContext?.intelligencePlan || null;
+  if (!intelligencePlan?.enabled) {
+    return ['Intelligence Mode: disabled'];
+  }
+
+  const routes = Array.isArray(intelligencePlan.routes) ? intelligencePlan.routes : [];
+  const outputs = Array.isArray(intelligencePlan.outputs) ? intelligencePlan.outputs : [];
+  return [
+    `Intelligence Mode: ${intelligencePlan.mode || 'multi-source-social-intel'}`,
+    `Platforms: ${(intelligencePlan.platforms || []).join(', ') || 'none'}`,
+    routes.length > 0
+      ? `Routes: ${routes.map((route) => `${route.platform}:${route.preferredMode}->${route.fallbackMode}`).join(' | ')}`
+      : `Routes: none`,
+    outputs.length > 0 ? `Expected Intelligence Outputs: ${outputs.join(' | ')}` : `Expected Intelligence Outputs: none`,
+    intelligencePlan.rationale ? `Rationale: ${intelligencePlan.rationale}` : `Rationale: none`
+  ];
+}
+
 function resolveAgent(roleId) {
   const mapping = readJson(MAPPING_FILE, { mapping: {}, defaults: {} });
   const mapped = mapping.mapping?.[roleId];
@@ -164,6 +183,7 @@ function buildAgentPrompt(subtask, taskContext) {
   const reputation = subtask.reputation || {};
   const resourceBudget = subtask.resourceBudget || {};
   const meetingSection = formatMeetingSection(taskContext, subtask);
+  const intelligenceSection = formatIntelligenceSection(taskContext);
   const lines = [
     `# Role: ${subtask.title}`,
     ``,
@@ -213,6 +233,9 @@ function buildAgentPrompt(subtask, taskContext) {
     `## Deliberation`,
     ...meetingSection,
     ``,
+    `## Intelligence`,
+    ...intelligenceSection,
+    ``,
     `## Upstream Handoff`,
     dependencyHandoffs.length > 0
       ? `Completed dependencies: ${dependencyHandoffs.map((entry) => `${entry.workerId}(${entry.roleId})`).join(', ')}`
@@ -251,9 +274,10 @@ function buildAgentPrompt(subtask, taskContext) {
     `15. Treat ${taskRoot} as the source-of-truth repository for this task; prefer reading and operating there instead of your role workspace`,
     `16. If you need to inspect files, start from ${taskRoot} and reference absolute paths in your output`,
     `17. Read ${briefPath} first when you need the authoritative task snapshot, team plan, or sync points`,
-    `18. If meeting mode is enabled and you are a meeting participant, answer in a decision-oriented style: constraints, options, risks, recommendation, then handoff`,
-    `19. Respect your prompt token budget by staying concise and role-focused; do not write long narrative unless your role is moderator or documentation`,
-    `20. If your reputation tier is guarded or cooldown, be extra conservative: avoid speculative tool use and prefer auditable outputs`,
+    `18. If intelligence mode is enabled and your role involves research, prioritize the configured platform routes and return structured evidence instead of loose notes`,
+    `19. If meeting mode is enabled and you are a meeting participant, answer in a decision-oriented style: constraints, options, risks, recommendation, then handoff`,
+    `20. Respect your prompt token budget by staying concise and role-focused; do not write long narrative unless your role is moderator or documentation`,
+    `21. If your reputation tier is guarded or cooldown, be extra conservative: avoid speculative tool use and prefer auditable outputs`,
     ``,
     `## Deliverable`,
     `Provide a clear summary of what you accomplished, any artifacts created, handoff notes for teammates, and next-step suggestions.`,

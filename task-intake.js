@@ -128,6 +128,13 @@ function createTaskBriefPayload(payload, repoShape = summarizeRepoShape(payload?
     staffingPlan: Array.isArray(plan.staffingPlan) ? plan.staffingPlan : [],
     teams: Array.isArray(plan.teams) ? plan.teams : [],
     syncPlan: Array.isArray(plan.syncPlan) ? plan.syncPlan : [],
+    intelligencePlan: plan.intelligencePlan || {
+      enabled: false,
+      mode: "none",
+      platforms: [],
+      routes: [],
+      outputs: []
+    },
     meetingPlan: plan.meetingPlan || {
       enabled: false,
       mode: 'none',

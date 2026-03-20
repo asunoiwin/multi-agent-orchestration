@@ -42,6 +42,19 @@
       "lifecycle": "ephemeral"
     },
     {
+      "id": "social-intel-researcher",
+      "name": "Social Intel Researcher",
+      "purpose": "Gather evidence from social media, forums, and trend surfaces, then normalize it into meeting-ready intelligence.",
+      "triggerCapabilities": ["social-intel", "social-research", "research", "analysis"],
+      "skills": ["read", "web_search", "web_fetch", "browser"],
+      "deny": ["write", "edit", "exec", "sessions_spawn"],
+      "memory": {
+        "scope": "social-intel-context",
+        "items": ["sources", "evidence_cards", "trend_notes", "credibility_flags"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
       "id": "code-implementer",
       "name": "Code Implementer",
       "purpose": "Implement code changes, configs, and working demos.",

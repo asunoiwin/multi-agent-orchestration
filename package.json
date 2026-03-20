@@ -10,6 +10,7 @@
     "plan": "node live-executor.js",
     "recover": "node result-recovery.js all",
     "smoke": "node live-executor.js \"先调研方案，然后实现 demo，最后做代码审查并输出交付说明\"",
+    "smoke:social-intel": "node scripts/oneapi-social-smoke.js OpenClaw",
     "e2e:subagent": "node e2e-subagent.js",
     "test": "node tests/stability-regression.test.js"
   },

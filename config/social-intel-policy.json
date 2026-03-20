@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "platformKeywords": {
+    "douyin": ["抖音", "douyin", "短视频", "视频号"],
+    "xiaohongshu": ["小红书", "rednote", "种草", "笔记"],
+    "weibo": ["微博", "热搜", "话题", "舆情"],
+    "bilibili": ["b站", "哔哩哔哩", "bilibili", "视频"],
+    "forum": ["论坛", "贴吧", "reddit", "v2ex", "社区", "评论区"]
+  },
+  "triggerKeywords": [
+    "社媒",
+    "舆情",
+    "口碑",
+    "热点",
+    "热搜",
+    "评论",
+    "视频信息",
+    "达人",
+    "笔记",
+    "讨论热度"
+  ],
+  "platformRoutes": {
+    "weibo": {
+      "preferredMode": "api",
+      "fallbackMode": "browser",
+      "sources": ["oneapi.weibo.search", "oneapi.weibo.detail", "browser.weibo.search"],
+      "notes": "微博优先走 OneAPI 搜索+详情，频控时回退浏览器。"
+    },
+    "douyin": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.douyin.search", "browser.douyin.detail", "ocr.video.cover"],
+      "notes": "抖音 API 当前易遇到 verify_check，主路径应保持浏览器。"
+    },
+    "xiaohongshu": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.xiaohongshu.search", "browser.xiaohongshu.detail"],
+      "notes": "小红书优先浏览器搜索与页面提取。"
+    },
+    "bilibili": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.bilibili.search", "browser.bilibili.detail"],
+      "notes": "B 站优先浏览器检索和结构化提取。"
+    },
+    "forum": {
+      "preferredMode": "browser",
+      "fallbackMode": "web_fetch",
+      "sources": ["browser.community.search", "web_fetch.community.thread"],
+      "notes": "论坛/社区优先浏览器，必要时直接抓取。"
+    }
+  },
+  "defaultOutputs": [
+    "source_inventory",
+    "evidence_cards",
+    "deduped_findings",
+    "credibility_notes",
+    "meeting_brief"
+  ],
+  "maxEvidenceCards": 8
+}
