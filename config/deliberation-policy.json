@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "triggerThresholds": {
+    "score": 8,
+    "ambiguity": 2,
+    "risk": 2,
+    "domains": 2,
+    "structure": 2
+  },
+  "maxRounds": 3,
+  "defaultRounds": 2,
+  "maxParticipants": 4,
+  "defaultParticipants": 3,
+  "roles": {
+    "moderator": ["solution-architect", "supervisor"],
+    "challenger": ["quality-auditor", "test-engineer"],
+    "executor": ["code-implementer", "os-operator"],
+    "research": ["social-intel-researcher", "web-researcher", "data-analyst"],
+    "recorder": ["doc-synthesizer"]
+  },
+  "requiredOutputs": [
+    "problem_statement",
+    "constraints",
+    "options",
+    "risks",
+    "recommendation",
+    "execution_handoff"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "openclaw-multi-agent",
+  "name": "OpenClaw Multi-Agent",
+  "version": "2.1.1",
+  "description": "Dynamic multi-agent orchestration plugin for OpenClaw with proactive routing, runtime recovery, and staged execution.",
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "proactiveRouting": {
+        "type": "boolean",
+        "default": true
+      },
+      "mainAgentOnly": {
+        "type": "boolean",
+        "default": true
+      },
+      "runtimeDir": {
+        "type": "string"
+      }
+    }
+  }
+}

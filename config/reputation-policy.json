@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "defaults": {
+    "score": 70,
+    "completed": 0,
+    "failed": 0,
+    "adopted": 0,
+    "rework": 0,
+    "stalled": 0
+  },
+  "tiers": [
+    {
+      "name": "trusted",
+      "minScore": 85,
+      "tokenMultiplier": 1.3,
+      "lifetime": "persistent",
+      "priorityBoost": 2,
+      "voteWeight": 1.3
+    },
+    {
+      "name": "standard",
+      "minScore": 65,
+      "tokenMultiplier": 1.0,
+      "lifetime": "semi-persistent",
+      "priorityBoost": 0,
+      "voteWeight": 1.0
+    },
+    {
+      "name": "guarded",
+      "minScore": 45,
+      "tokenMultiplier": 0.8,
+      "lifetime": "ephemeral",
+      "priorityBoost": -1,
+      "voteWeight": 0.8
+    },
+    {
+      "name": "cooldown",
+      "minScore": 0,
+      "tokenMultiplier": 0.6,
+      "lifetime": "ephemeral",
+      "priorityBoost": -2,
+      "voteWeight": 0.5
+    }
+  ],
+  "penalties": {
+    "blocked": -6,
+    "stalled": -8,
+    "rework": -5,
+    "failed": -12
+  },
+  "rewards": {
+    "completed": 4,
+    "adopted": 6,
+    "handoffAccepted": 5,
+    "highConfidence": 3
+  },
+  "resourceBands": {
+    "small": 1200,
+    "medium": 2200,
+    "large": 3200
+  }
+}
