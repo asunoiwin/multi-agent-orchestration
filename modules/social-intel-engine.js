@@ -24,7 +24,15 @@ function collectPlatformSignals(taskText = '', policy = loadPolicy()) {
   const text = String(taskText || '').toLowerCase();
   const matched = [];
   for (const [platform, keywords] of Object.entries(policy.platformKeywords || {})) {
-    const hit = (keywords || []).some((keyword) => text.includes(String(keyword).toLowerCase()));
+    const hit = (keywords || []).some((keyword) => {
+      const normalized = String(keyword).toLowerCase().trim();
+      if (!normalized) return false;
+      if (/^[a-z0-9_-]{1,3}$/.test(normalized)) {
+        const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, 'i').test(text);
+      }
+      return text.includes(normalized);
+    });
     if (hit) matched.push(platform);
   }
   return matched;
@@ -54,6 +62,10 @@ function buildCollectionPlan(routes = [], policy = loadPolicy()) {
     platform: route.platform,
     preferredMode: route.preferredMode,
     fallbackMode: route.fallbackMode,
+    primarySearchTool:
+      route.preferredMode === 'api'
+        ? 'platform-api'
+        : '/Users/rico/.openclaw/workspace/scripts/web-search-structured.sh',
     maxSources: maxSourcesPerPlatform,
     steps: [
       `discover:${route.platform}`,
@@ -111,7 +123,7 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
     collectionPlan,
     evidenceSchema,
     socialBreadth,
-    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。`
+    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。泛搜索优先使用 /Users/rico/.openclaw/workspace/scripts/web-search-structured.sh，微博可优先使用 API。`
   };
 }
 

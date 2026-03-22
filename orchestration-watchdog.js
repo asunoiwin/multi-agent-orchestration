@@ -14,6 +14,11 @@ const ROOT = __dirname;
 const RUNTIME_DIR = path.join(ROOT, 'runtime');
 const STATE_FILE = path.join(RUNTIME_DIR, 'orchestration-watchdog-state.json');
 const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
+const SPAWN_QUEUE_DIR = path.join(ROOT, 'runtime', 'spawn-queue');
+// P0 Fix: sync public state to root .openclaw/ for external consumers (main agent, other plugins)
+const PUBLIC_ROOT = path.join(process.env.HOME || '', '.openclaw');
+const PUBLIC_EXECUTION = path.join(PUBLIC_ROOT, 'multi-agent-execution.json');
+const PUBLIC_ROUTING = path.join(PUBLIC_ROOT, 'multi-agent-routing.json');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
@@ -23,6 +28,35 @@ function readJson(file, fallback = null) {
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+function buildNotifyReason({ nextAgents, changed, syncChanged, completedTasks, cleanup, rehydration }) {
+  if (nextAgents.length > 0) return 'workers-ready';
+  if ((cleanup?.archivedTasks || 0) > 0) return 'runtime-cleanup';
+  if ((rehydration?.recoveredAgents || 0) > 0 || (rehydration?.recoveredTasks || 0) > 0) return 'task-rehydrated';
+  if (completedTasks.length > 0 && changed) return 'task-completed';
+  if ((syncChanged || 0) > 0) return 'session-recovered';
+  if (changed) return 'state-changed';
+  return null;
+}
+
+function buildSummary({ activeTasks, completedTasks, nextAgents, notifyReason, cleanup, rehydration }) {
+  const lines = [];
+  if (notifyReason === 'workers-ready') {
+    lines.push(`已准备启动 ${nextAgents.length} 个 worker。`);
+  } else if (notifyReason === 'task-completed') {
+    lines.push(`检测到 ${completedTasks.length} 个任务已完成并已回收。`);
+  } else if (notifyReason === 'task-rehydrated') {
+    lines.push('检测到中断任务已重新纳入恢复链。');
+  } else if (notifyReason === 'session-recovered') {
+    lines.push('检测到 session 恢复，已同步多 agent 运行态。');
+  } else if (notifyReason === 'runtime-cleanup') {
+    lines.push('检测到旧运行态已归档清理，当前视图已收口。');
+  } else if (notifyReason === 'state-changed') {
+    lines.push('多 agent 状态发生变化，正在同步最新阶段。');
+  }
+  lines.push(`当前多 agent 任务：活跃 ${activeTasks.length}，已完成 ${completedTasks.length}，待启动 worker ${nextAgents.length}。`);
+  return lines.join(' ');
 }
 
 function buildSpawnPayload(agent) {
@@ -54,6 +88,8 @@ function main() {
   const nextAgents = getLaunchableAgents();
   const activeTasks = summaries.filter((task) => ['in_progress', 'waiting'].includes(task.status));
   const completedTasks = summaries.filter((task) => task.status === 'completed');
+  let spawnedViaQueue = 0;
+  const spawnQueue = [];
   const fingerprint = crypto
     .createHash('sha1')
     .update(JSON.stringify({
@@ -64,11 +100,78 @@ function main() {
     .digest('hex');
   const previous = readJson(STATE_FILE, {});
   const changed = previous.fingerprint !== fingerprint;
+  const notifyReason = buildNotifyReason({
+    nextAgents,
+    changed,
+    syncChanged: sync.changed,
+    completedTasks,
+    cleanup,
+    rehydration,
+  });
+  const summary = buildSummary({
+    activeTasks,
+    completedTasks,
+    nextAgents,
+    notifyReason,
+    cleanup,
+    rehydration,
+  });
 
   writeJson(STATE_FILE, {
     fingerprint,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    notifyReason,
   });
+
+  // P0 Fix: sync state to public root paths so main agent can read them
+  writeJson(PUBLIC_EXECUTION, {
+    updatedAt: new Date().toISOString(),
+    counts: {
+      activeTasks: activeTasks.length,
+      completedTasks: completedTasks.length,
+      nextAgents: nextAgents.length,
+      spawnedViaQueue,
+    },
+    completedTasks: completedTasks.map((task) => ({
+      taskId: task.taskId,
+      totalCount: task.totalCount,
+      completedCount: task.completedCount,
+    })),
+  });
+  writeJson(PUBLIC_ROUTING, {
+    routingDecision: nextAgents.length > 0 ? 'multi' : (completedTasks.length > 0 ? 'complete' : 'none'),
+    counts: { activeTasks: activeTasks.length, nextAgents: nextAgents.length },
+    nextAgentLabels: nextAgents.map((a) => a.label),
+    updatedAt: new Date().toISOString(),
+  });
+
+  // P0 Fix: write spawn queue files (spawnedViaQueue/spawnQueue declared at top of main)
+  if (nextAgents.length > 0) {
+    // spawnedViaQueue and spawnQueue are already declared above
+    fs.mkdirSync(SPAWN_QUEUE_DIR, { recursive: true });
+    for (const agent of nextAgents) {
+      const payload = buildSpawnPayload(agent);
+      const triggerFile = path.join(SPAWN_QUEUE_DIR, `${Date.now()}-${agent.label}.json`);
+      const trigger = {
+        action: 'spawn',
+        payload,
+        requestedAt: new Date().toISOString(),
+        source: 'orchestration-watchdog',
+      };
+      fs.writeFileSync(triggerFile, JSON.stringify(trigger, null, 2));
+      spawnQueue.push({ label: agent.label, file: triggerFile });
+      spawnedViaQueue++;
+    }
+  }
+
+  // Also write a machine-readable spawn queue manifest for the cron agent to consume
+  const SPAWN_MANIFEST = path.join(RUNTIME_DIR, 'spawn-queue-manifest.json');
+  fs.writeFileSync(SPAWN_MANIFEST, JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    count: spawnQueue.length,
+    agents: spawnQueue.map(a => ({ label: a.label })),
+    root: SPAWN_QUEUE_DIR,
+  }, null, 2));
 
   console.log(JSON.stringify({
     generatedAt: new Date().toISOString(),
@@ -80,7 +183,8 @@ function main() {
     counts: {
       activeTasks: activeTasks.length,
       completedTasks: completedTasks.length,
-      nextAgents: nextAgents.length
+      nextAgents: nextAgents.length,
+      spawnedViaQueue,
     },
     nextAgents: nextAgents.map((agent) => ({
       label: agent.label,
@@ -96,7 +200,9 @@ function main() {
       totalCount: task.totalCount,
       completedCount: task.completedCount
     })),
-    shouldNotify: nextAgents.length > 0 || (changed && (sync.changed > 0 || completedTasks.length > 0))
+    shouldNotify: nextAgents.length > 0 || (changed && (sync.changed > 0 || completedTasks.length > 0 || Boolean(notifyReason))),
+    notifyReason,
+    summary,
   }, null, 2));
 }
 

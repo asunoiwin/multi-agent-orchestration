@@ -96,11 +96,12 @@ function formatIntelligenceSection(taskContext) {
       ? `Routes: ${routes.map((route) => `${route.platform}:${route.preferredMode}->${route.fallbackMode}`).join(' | ')}`
       : `Routes: none`,
     collectionPlan.length > 0
-      ? `Collection Plan: ${collectionPlan.map((item) => `${item.platform}[${item.maxSources}]`).join(' | ')}`
+      ? `Collection Plan: ${collectionPlan.map((item) => `${item.platform}[${item.maxSources}] via ${item.primarySearchTool || item.preferredMode}`).join(' | ')}`
       : `Collection Plan: none`,
     evidenceSchema.length > 0 ? `Evidence Schema: ${evidenceSchema.join(', ')}` : `Evidence Schema: none`,
     outputs.length > 0 ? `Expected Intelligence Outputs: ${outputs.join(' | ')}` : `Expected Intelligence Outputs: none`,
-    intelligencePlan.rationale ? `Rationale: ${intelligencePlan.rationale}` : `Rationale: none`
+    intelligencePlan.rationale ? `Rationale: ${intelligencePlan.rationale}` : `Rationale: none`,
+    'Search Rule: 泛搜索优先运行 /Users/rico/.openclaw/workspace/scripts/web-search-structured.sh；微博可走 API；抖音/小红书/B站/知乎优先浏览器。'
   ];
 }
 

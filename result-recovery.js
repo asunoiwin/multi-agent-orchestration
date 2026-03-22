@@ -21,6 +21,47 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+// P0 Fix: file locking to prevent concurrent write races on ACTIVE_FILE
+const ACTIVE_LOCK = ACTIVE_FILE + '.lock';
+
+function sleepMs(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // Busy wait for tiny lock backoff windows.
+  }
+}
+
+function acquireLock(lockFile, maxWaitMs = 5000) {
+  const start = Date.now();
+  while (fs.existsSync(lockFile)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error(`Failed to acquire lock on ${lockFile} after ${maxWaitMs}ms`);
+    }
+    try { fs.utimesSync(lockFile, new Date(), new Date()); } catch {}
+    sleepMs(25);
+  }
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8');
+}
+
+function releaseLock(lockFile) {
+  try { fs.unlinkSync(lockFile); } catch {}
+}
+
+function writeActiveAgents(data) {
+  const content = JSON.stringify(data, null, 2);
+  fs.mkdirSync(path.dirname(ACTIVE_FILE), { recursive: true });
+  fs.writeFileSync(ACTIVE_FILE, content, 'utf8');
+}
+
+function writeActiveAgentsSafe(data) {
+  acquireLock(ACTIVE_LOCK);
+  try {
+    writeActiveAgents(data);
+  } finally {
+    releaseLock(ACTIVE_LOCK);
+  }
+}
+
 function getRoleMapping() {
   return readJson(MAPPING_FILE, { mapping: {}, defaults: {} });
 }
@@ -328,7 +369,7 @@ function syncActiveAgentsFromSessions() {
   }
 
   if (changed > 0) {
-    writeJson(ACTIVE_FILE, active);
+    writeActiveAgentsSafe(active);
   }
 
   return { changed, active };
@@ -506,7 +547,7 @@ function normalizeActiveAgents(active) {
   });
 
   if (changed) {
-    writeJson(ACTIVE_FILE, normalized);
+    writeActiveAgentsSafe(normalized);
   }
 
   return { active: normalized, changed };
@@ -527,7 +568,7 @@ function updateAgentStatus(label, status, result = null) {
     agent.result = result;
   }
 
-  writeJson(ACTIVE_FILE, active);
+  writeActiveAgentsSafe(active);
   return agent;
 }
 
@@ -823,7 +864,7 @@ function persistWithSnapshot(agent, reason, retention = 5) {
   const idx = active.findIndex(a => a.label === agent.label);
   if (idx >= 0) {
     active[idx] = { ...active[idx], ...agent, updatedAt: new Date().toISOString() };
-    writeJson(ACTIVE_FILE, active);
+    writeActiveAgentsSafe(active);
   }
   
   return { snapshotCount: snapshots.length, retained: Math.min(snapshots.length, retention) };

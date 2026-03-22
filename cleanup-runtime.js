@@ -8,6 +8,40 @@ const TASK_ARCHIVE_DIR = path.join(TASKS_DIR, 'archive');
 const RUNTIME_DIR = path.join(ROOT, 'runtime');
 const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
 const ACTIVE_ARCHIVE_DIR = path.join(RUNTIME_DIR, 'archive');
+const ACTIVE_LOCK = ACTIVE_FILE + '.lock';
+
+// P0 Fix: file locking to prevent concurrent write races
+function sleepMs(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    // Busy wait for tiny lock backoff windows.
+  }
+}
+
+function acquireLock(lockFile, maxWaitMs = 5000) {
+  const start = Date.now();
+  while (fs.existsSync(lockFile)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error(`Failed to acquire lock on ${lockFile} after ${maxWaitMs}ms`);
+    }
+    try { fs.utimesSync(lockFile, new Date(), new Date()); } catch {}
+    sleepMs(25);
+  }
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8');
+}
+
+function releaseLock(lockFile) {
+  try { fs.unlinkSync(lockFile); } catch {}
+}
+
+function writeActiveAgentsSafe(data) {
+  acquireLock(ACTIVE_LOCK);
+  try {
+    writeJson(ACTIVE_FILE, data);
+  } finally {
+    releaseLock(ACTIVE_LOCK);
+  }
+}
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
@@ -211,6 +245,7 @@ function cleanupRuntime(options = {}) {
   const tasks = loadTaskFiles();
   const archiveTaskIds = new Set();
   const archivedTasks = [];
+  const orphanRuntimeAgents = [];
 
   for (const task of tasks) {
     const taskId = task.data.id || path.basename(task.file, '.json');
@@ -231,6 +266,18 @@ function cleanupRuntime(options = {}) {
 
   const prunedAgents = [];
   const keptAgents = active.filter((agent) => {
+    const missingTaskId = !agent.taskId;
+    const agentAge = ageMinutes(agent.updatedAt || agent.createdAt, nowMs);
+    const staleTasklessAgent = missingTaskId && agentAge >= settings.validationArchiveCompletedMinutes;
+    if (staleTasklessAgent) {
+      orphanRuntimeAgents.push({
+        label: agent.label || agent.workerId || agent.roleId || 'unknown',
+        reason: 'agent_missing_task_id',
+        ageMinutes: agentAge
+      });
+      prunedAgents.push(agent.label || agent.workerId || agent.roleId || 'unknown');
+      return false;
+    }
     const remove = archiveTaskIds.has(agent.taskId);
     if (remove) {
       prunedAgents.push(agent.label || agent.workerId || agent.roleId || agent.taskId);
@@ -239,7 +286,7 @@ function cleanupRuntime(options = {}) {
   });
 
   if (prunedAgents.length > 0 || keptAgents.length !== active.length) {
-    writeJson(ACTIVE_FILE, keptAgents);
+    writeActiveAgentsSafe( keptAgents);
   }
 
   return {
@@ -251,6 +298,7 @@ function cleanupRuntime(options = {}) {
     validationArchiveCompletedMinutes: settings.validationArchiveCompletedMinutes,
     productionArchiveGraceMinutes: settings.productionArchiveGraceMinutes,
     archivedTasks,
+    orphanRuntimeAgents,
     prunedAgentCount: prunedAgents.length,
     remainingAgents: keptAgents.length
   };
