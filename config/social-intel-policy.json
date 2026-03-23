@@ -9,7 +9,14 @@
     "zhihu": ["知乎", "问答", "专栏"],
     "kuaishou": ["快手", "ks", "快手热视频"],
     "tieba": ["贴吧", "百度贴吧", "吧友"],
-    "forum": ["论坛", "reddit", "v2ex", "社区", "评论区"]
+    "forum": ["论坛", "reddit", "v2ex", "社区", "评论区"],
+    "taobao": ["淘宝", "tb", "天猫", "tmall"],
+    "jd": ["京东", "jd", "jd.com"],
+    "xianyu": ["闲鱼", "二手", "xianyu"],
+    "pinduoduo": ["拼多多", "pdd"],
+    "dewu": ["得物", "毒app", "球鞋"],
+    "meituan": ["美团", "外卖", "团购", "到店"],
+    "ctrip": ["携程", "酒店", "机票", "旅游"]
   },
   "triggerKeywords": [
     "社媒",
@@ -24,7 +31,17 @@
     "讨论热度",
     "评论区观点",
     "用户反馈",
-    "社区讨论"
+    "社区讨论",
+    "商品",
+    "店铺",
+    "价格",
+    "销量",
+    "评价",
+    "加购",
+    "攻略",
+    "酒店",
+    "机票",
+    "团购"
   ],
   "platformRoutes": {
     "weibo": {
@@ -74,6 +91,48 @@
       "fallbackMode": "web_fetch",
       "sources": ["browser.community.search", "web_fetch.community.thread"],
       "notes": "论坛/社区优先浏览器，必要时直接抓取。"
+    },
+    "taobao": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.taobao.search", "browser.taobao.item", "browser.tmall.search"],
+      "notes": "淘宝/天猫优先浏览器，重点保留价格、销量、店铺、筛选条件。"
+    },
+    "jd": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.jd.search", "browser.jd.item"],
+      "notes": "京东优先浏览器，重点保留价格、店铺、评价和配送信息。"
+    },
+    "xianyu": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.xianyu.search", "browser.xianyu.item"],
+      "notes": "闲鱼优先浏览器，重点保留卖家、成色、价格、位置和发布时间。"
+    },
+    "pinduoduo": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.pinduoduo.search", "browser.pinduoduo.item"],
+      "notes": "拼多多优先浏览器，重点保留价格、拼单信息、销量和评价。"
+    },
+    "dewu": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.dewu.search", "browser.dewu.item"],
+      "notes": "得物优先浏览器，重点保留价格、鉴定信息、尺码和交易状态。"
+    },
+    "meituan": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.meituan.search", "browser.meituan.store"],
+      "notes": "美团优先浏览器，重点保留店铺、价格、评分、位置和套餐。"
+    },
+    "ctrip": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.ctrip.search", "browser.ctrip.hotel", "browser.ctrip.flight"],
+      "notes": "携程优先浏览器，重点保留价格、时间、地点、评分和退改规则。"
     }
   },
   "defaultOutputs": [

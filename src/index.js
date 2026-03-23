@@ -30,6 +30,22 @@ function getPromptText(event) {
   return String(event?.prompt || '').trim();
 }
 
+function sanitizePrompt(prompt) {
+  if (!prompt) return '';
+  let cleaned = String(prompt);
+  cleaned = cleaned.replace(/Relevant memory:\s*[\s\S]*?(?=\n(?:Read HEARTBEAT\.md|When reading HEARTBEAT\.md|Current time:|$))/gi, '');
+  cleaned = cleaned.replace(/Read HEARTBEAT\.md if it exists[\s\S]*?Do not read docs\/heartbeat\.md\.\s*/gi, '');
+  cleaned = cleaned.replace(/Current time:.*$/gim, '');
+  cleaned = cleaned.replace(/\[Internal task completion event\][\s\S]*?<<<END_UNTRUSTED_CHILD_RESULT>>>/gi, '');
+  cleaned = cleaned.replace(/<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>[\s\S]*?<<<END_UNTRUSTED_CHILD_RESULT>>>/gi, '');
+  cleaned = cleaned.replace(/Conversation info \(untrusted metadata\):[\s\S]*?```[\s\S]*?```/gi, '');
+  cleaned = cleaned.replace(/Sender \(untrusted metadata\):[\s\S]*?```[\s\S]*?```/gi, '');
+  cleaned = cleaned.replace(/\[[^\]]*source=before_agent_start[^\]]*\]/gi, '');
+  cleaned = cleaned.replace(/\[[^\]]*source=auto-capture[^\]]*\]/gi, '');
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+  return cleaned.trim();
+}
+
 function shouldSkip(prompt) {
   if (!prompt) return true;
   if (/\[Subagent Context\]|\[Subagent Task\]:|^# Role:/m.test(prompt)) return true;
@@ -168,7 +184,7 @@ const plugin = {
     api.logger.info?.('[openclaw-multi-agent] plugin registered');
 
     api.on('before_agent_start', async (event) => {
-      const prompt = getPromptText(event);
+      const prompt = sanitizePrompt(getPromptText(event));
       if (shouldSkip(prompt)) return;
       if (event?.agentId && event.agentId !== 'main') return;
       if (typeof analyzeTask !== 'function') return;

@@ -89,6 +89,7 @@ function formatIntelligenceSection(taskContext) {
   const outputs = Array.isArray(intelligencePlan.outputs) ? intelligencePlan.outputs : [];
   const collectionPlan = Array.isArray(intelligencePlan.collectionPlan) ? intelligencePlan.collectionPlan : [];
   const evidenceSchema = Array.isArray(intelligencePlan.evidenceSchema) ? intelligencePlan.evidenceSchema : [];
+  const skillPath = intelligencePlan.skillPath || null;
   return [
     `Intelligence Mode: ${intelligencePlan.mode || 'multi-source-social-intel'}`,
     `Platforms: ${(intelligencePlan.platforms || []).join(', ') || 'none'}`,
@@ -98,6 +99,7 @@ function formatIntelligenceSection(taskContext) {
     collectionPlan.length > 0
       ? `Collection Plan: ${collectionPlan.map((item) => `${item.platform}[${item.maxSources}] via ${item.primarySearchTool || item.preferredMode}`).join(' | ')}`
       : `Collection Plan: none`,
+    skillPath ? `Skill: ${skillPath}` : `Skill: none`,
     evidenceSchema.length > 0 ? `Evidence Schema: ${evidenceSchema.join(', ')}` : `Evidence Schema: none`,
     outputs.length > 0 ? `Expected Intelligence Outputs: ${outputs.join(' | ')}` : `Expected Intelligence Outputs: none`,
     intelligencePlan.rationale ? `Rationale: ${intelligencePlan.rationale}` : `Rationale: none`,

@@ -3,6 +3,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const POLICY_FILE = path.join(ROOT, 'config', 'social-intel-policy.json');
+const SKILL_PATH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'skills', 'social-commerce-intel', 'SKILL.md');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
@@ -52,7 +53,8 @@ function buildPlatformRoute(platform, policy = loadPolicy()) {
     preferredMode: route.preferredMode || 'browser',
     fallbackMode: route.fallbackMode || 'browser',
     sources: Array.isArray(route.sources) ? route.sources : [],
-    notes: route.notes || ''
+    notes: route.notes || '',
+    skillPath: SKILL_PATH
   };
 }
 
@@ -74,7 +76,8 @@ function buildCollectionPlan(routes = [], policy = loadPolicy()) {
       `dedupe:${route.platform}`
     ],
     sources: route.sources,
-    notes: route.notes
+    notes: route.notes,
+    skillPath: route.skillPath
   }));
 }
 
@@ -122,8 +125,9 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
     maxEvidenceCards: Number(policy.maxEvidenceCards ?? 8),
     collectionPlan,
     evidenceSchema,
+    skillPath: SKILL_PATH,
     socialBreadth,
-    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。泛搜索优先使用 /Users/rico/.openclaw/workspace/scripts/web-search-structured.sh，微博可优先使用 API。`
+    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。泛搜索优先使用 /Users/rico/.openclaw/workspace/scripts/web-search-structured.sh，微博可优先使用 API。优先参考 Skill: ${SKILL_PATH}`
   };
 }
 

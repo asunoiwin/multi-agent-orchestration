@@ -185,13 +185,14 @@ function testPlannerAssignsSocialIntelRole() {
 
 function testExpandedPlatformCoverage() {
   const plan = buildIntelligencePlan(
-    '请汇总微博、抖音、小红书、B站、知乎、快手、贴吧对 OpenClaw 的讨论，并形成情报摘要',
+    '请汇总微博、抖音、小红书、B站、知乎、快手、贴吧，以及淘宝、京东、闲鱼、拼多多、得物、美团、携程上的讨论和商品信息，并形成情报摘要',
     { socialIntel: true },
     { domains: 5 }
   );
-  ['weibo', 'douyin', 'xiaohongshu', 'bilibili', 'zhihu', 'kuaishou', 'tieba'].forEach((platform) => {
+  ['weibo', 'douyin', 'xiaohongshu', 'bilibili', 'zhihu', 'kuaishou', 'tieba', 'taobao', 'jd', 'xianyu', 'pinduoduo', 'dewu', 'meituan', 'ctrip'].forEach((platform) => {
     assert.ok(plan.platforms.includes(platform), `${platform} should be included in expanded platform coverage`);
   });
+  assert.ok(String(plan.skillPath || '').includes('social-commerce-intel'), 'social-commerce skill path should be present');
 }
 
 function run() {
