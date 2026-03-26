@@ -5,6 +5,7 @@ const ROOT = path.resolve(__dirname, '..');
 const POLICY_FILE = path.join(ROOT, 'config', 'social-intel-policy.json');
 const SKILL_PATH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'skills', 'social-commerce-intel', 'SKILL.md');
 const OPENCLI_SEARCH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'opencli-search.sh');
+const BROWSER_SESSION_BRIDGE = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'browser-session-bridge.py');
 const STRUCTURED_SEARCH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'web-search-structured.sh');
 const CONTENT_DISTILL = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'web-content-distill.py');
 
@@ -73,6 +74,7 @@ function buildCollectionPlan(routes = [], policy = loadPolicy()) {
         : route.preferredMode === 'opencli'
           ? OPENCLI_SEARCH
           : STRUCTURED_SEARCH,
+    browserSessionBridge: BROWSER_SESSION_BRIDGE,
     maxSources: maxSourcesPerPlatform,
     steps: [
       `discover:${route.platform}`,
@@ -133,7 +135,7 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
     evidenceSchema,
     skillPath: SKILL_PATH,
     socialBreadth,
-    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。支持的平台优先使用 ${OPENCLI_SEARCH} 复用用户浏览器会话；泛搜索回退到 ${STRUCTURED_SEARCH}；网页清洗优先使用 ${CONTENT_DISTILL}。微博可优先使用 API。优先参考 Skill: ${SKILL_PATH}`
+    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。支持的平台优先使用 ${OPENCLI_SEARCH} 复用用户浏览器会话；若浏览器桥不可用，则回退 ${BROWSER_SESSION_BRIDGE} 读取当前用户浏览器会话，再回退到 ${STRUCTURED_SEARCH}；网页清洗优先使用 ${CONTENT_DISTILL}。微博可优先使用 API。优先参考 Skill: ${SKILL_PATH}`
   };
 }
 

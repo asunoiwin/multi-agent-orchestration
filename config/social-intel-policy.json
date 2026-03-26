@@ -53,26 +53,26 @@
     "douyin": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.douyin.search", "browser.douyin.detail", "ocr.video.cover"],
-      "notes": "抖音 API 当前易遇到 verify_check，主路径应保持浏览器。"
+      "sources": ["browser_session.douyin.search", "browser.douyin.search", "browser.douyin.detail", "ocr.video.cover"],
+      "notes": "抖音 API 当前易遇到 verify_check，主路径应保持用户浏览器和浏览器提取。"
     },
     "xiaohongshu": {
       "preferredMode": "opencli",
       "fallbackMode": "browser",
-      "sources": ["opencli.xiaohongshu.search", "browser.xiaohongshu.search", "browser.xiaohongshu.detail"],
-      "notes": "小红书优先 opencli 复用用户浏览器，再回退浏览器搜索与页面提取。"
+      "sources": ["opencli.xiaohongshu.search", "browser_session.xiaohongshu.search", "browser.xiaohongshu.search", "browser.xiaohongshu.detail"],
+      "notes": "小红书优先 opencli 复用用户浏览器，再回退用户浏览器会话桥和浏览器搜索。"
     },
     "bilibili": {
       "preferredMode": "opencli",
       "fallbackMode": "browser",
-      "sources": ["opencli.bilibili.search", "browser.bilibili.search", "browser.bilibili.detail"],
-      "notes": "B 站优先 opencli 复用用户浏览器，再回退浏览器检索和结构化提取。"
+      "sources": ["opencli.bilibili.search", "browser_session.bilibili.search", "browser.bilibili.search", "browser.bilibili.detail"],
+      "notes": "B 站优先 opencli 复用用户浏览器，再回退用户浏览器会话桥和浏览器检索。"
     },
     "zhihu": {
       "preferredMode": "opencli",
       "fallbackMode": "web_fetch",
-      "sources": ["opencli.zhihu.search", "browser.zhihu.search", "browser.zhihu.answer", "web_fetch.zhihu.page"],
-      "notes": "知乎优先 opencli 复用用户浏览器，必要时再回退浏览器和直接网页抓取。"
+      "sources": ["opencli.zhihu.search", "browser_session.zhihu.search", "browser.zhihu.search", "browser.zhihu.answer", "web_fetch.zhihu.page"],
+      "notes": "知乎优先 opencli 复用用户浏览器，必要时再回退用户浏览器会话桥、浏览器和直接网页抓取。"
     },
     "kuaishou": {
       "preferredMode": "browser",
@@ -95,44 +95,44 @@
     "taobao": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.taobao.search", "browser.taobao.item", "browser.tmall.search"],
-      "notes": "淘宝/天猫优先浏览器，重点保留价格、销量、店铺、筛选条件。"
+      "sources": ["browser_session.taobao.search", "browser.taobao.search", "browser.taobao.item", "browser.tmall.search"],
+      "notes": "淘宝/天猫优先用户浏览器，重点保留价格、销量、店铺、筛选条件。"
     },
     "jd": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.jd.search", "browser.jd.item"],
-      "notes": "京东优先浏览器，重点保留价格、店铺、评价和配送信息。"
+      "sources": ["browser_session.jd.search", "browser.jd.search", "browser.jd.item"],
+      "notes": "京东优先用户浏览器，重点保留价格、店铺、评价和配送信息。"
     },
     "xianyu": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.xianyu.search", "browser.xianyu.item"],
-      "notes": "闲鱼优先浏览器，重点保留卖家、成色、价格、位置和发布时间。"
+      "sources": ["browser_session.xianyu.search", "browser.xianyu.item"],
+      "notes": "闲鱼优先用户浏览器，重点保留卖家、成色、价格、位置和发布时间。"
     },
     "pinduoduo": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.pinduoduo.search", "browser.pinduoduo.item"],
-      "notes": "拼多多优先浏览器，重点保留价格、拼单信息、销量和评价。"
+      "sources": ["browser_session.pinduoduo.search", "browser.pinduoduo.item"],
+      "notes": "拼多多优先用户浏览器，重点保留价格、拼单信息、销量和评价。"
     },
     "dewu": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.dewu.search", "browser.dewu.item"],
-      "notes": "得物优先浏览器，重点保留价格、鉴定信息、尺码和交易状态。"
+      "sources": ["browser_session.dewu.search", "browser.dewu.item"],
+      "notes": "得物优先用户浏览器，重点保留价格、鉴定信息、尺码和交易状态。"
     },
     "meituan": {
       "preferredMode": "browser",
       "fallbackMode": "browser",
-      "sources": ["browser.meituan.search", "browser.meituan.store"],
-      "notes": "美团优先浏览器，重点保留店铺、价格、评分、位置和套餐。"
+      "sources": ["browser_session.meituan.search", "browser.meituan.store"],
+      "notes": "美团优先用户浏览器，重点保留店铺、价格、评分、位置和套餐。"
     },
     "ctrip": {
       "preferredMode": "opencli",
       "fallbackMode": "browser",
-      "sources": ["opencli.ctrip.search", "browser.ctrip.search", "browser.ctrip.hotel", "browser.ctrip.flight"],
-      "notes": "携程优先 opencli 复用用户浏览器，重点保留价格、时间、地点、评分和退改规则。"
+      "sources": ["opencli.ctrip.search", "browser_session.ctrip.search", "browser.ctrip.search", "browser.ctrip.hotel", "browser.ctrip.flight"],
+      "notes": "携程优先 opencli 复用用户浏览器，再回退用户浏览器会话桥；重点保留价格、时间、地点、评分和退改规则。"
     }
   },
   "defaultOutputs": [
