@@ -30,12 +30,20 @@ function getPromptText(event) {
   return String(event?.prompt || '').trim();
 }
 
-function resolveEventAgentId(event) {
-  const direct = String(event?.agentId || '').trim();
+function resolveEventAgentId(event, ctx) {
+  const direct = String(event?.agentId || ctx?.agentId || '').trim();
   if (direct) return direct;
-  const nestedDirect = String(event?.agent?.id || event?.agent?.name || event?.context?.agentId || '').trim();
+  const nestedDirect = String(
+    event?.agent?.id ||
+    event?.agent?.name ||
+    event?.context?.agentId ||
+    ctx?.agent?.id ||
+    ctx?.agent?.name ||
+    ctx?.context?.agentId ||
+    ''
+  ).trim();
   if (nestedDirect) return nestedDirect;
-  const sessionKey = String(event?.sessionKey || event?.session || '').trim();
+  const sessionKey = String(event?.sessionKey || ctx?.sessionKey || event?.session || '').trim();
   const match = sessionKey.match(/^agent:([^:]+):/);
   if (match?.[1]) return match[1];
   return 'main';
@@ -200,10 +208,10 @@ const plugin = {
   register(api) {
     api.logger.info?.('[openclaw-multi-agent] plugin registered');
 
-    api.on('before_agent_start', async (event) => {
+    api.on('before_prompt_build', async (event, ctx) => {
       const prompt = sanitizePrompt(getPromptText(event));
       if (shouldSkip(prompt)) return;
-      const agentId = resolveEventAgentId(event);
+      const agentId = resolveEventAgentId(event, ctx);
       const mainAgentOnly = api.pluginConfig?.mainAgentOnly !== false;
       if (mainAgentOnly && agentId !== 'main') return;
       if (typeof analyzeTask !== 'function') return;
