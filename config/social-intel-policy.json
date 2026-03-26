@@ -46,9 +46,9 @@
   "platformRoutes": {
     "weibo": {
       "preferredMode": "api",
-      "fallbackMode": "opencli",
-      "sources": ["oneapi.weibo.search", "oneapi.weibo.detail", "opencli.weibo.search", "browser.weibo.search"],
-      "notes": "微博优先走 OneAPI 搜索+详情，API 受限时优先回退 opencli 复用用户浏览器。"
+      "fallbackMode": "browser_session",
+      "sources": ["oneapi.weibo.search", "oneapi.weibo.detail", "browser_session.weibo.search", "browser.weibo.search"],
+      "notes": "微博优先走 OneAPI 搜索+详情，API 受限时优先回退用户浏览器会话。"
     },
     "douyin": {
       "preferredMode": "browser",
@@ -57,22 +57,22 @@
       "notes": "抖音 API 当前易遇到 verify_check，主路径应保持用户浏览器和浏览器提取。"
     },
     "xiaohongshu": {
-      "preferredMode": "opencli",
+      "preferredMode": "browser_session",
       "fallbackMode": "browser",
-      "sources": ["opencli.xiaohongshu.search", "browser_session.xiaohongshu.search", "browser.xiaohongshu.search", "browser.xiaohongshu.detail"],
-      "notes": "小红书优先 opencli 复用用户浏览器，再回退用户浏览器会话桥和浏览器搜索。"
+      "sources": ["browser_session.xiaohongshu.search", "browser.xiaohongshu.search", "browser.xiaohongshu.detail"],
+      "notes": "小红书优先用户浏览器会话，再回退浏览器搜索。"
     },
     "bilibili": {
-      "preferredMode": "opencli",
+      "preferredMode": "browser_session",
       "fallbackMode": "browser",
-      "sources": ["opencli.bilibili.search", "browser_session.bilibili.search", "browser.bilibili.search", "browser.bilibili.detail"],
-      "notes": "B 站优先 opencli 复用用户浏览器，再回退用户浏览器会话桥和浏览器检索。"
+      "sources": ["browser_session.bilibili.search", "browser.bilibili.search", "browser.bilibili.detail"],
+      "notes": "B 站优先用户浏览器会话，再回退浏览器检索。"
     },
     "zhihu": {
-      "preferredMode": "opencli",
+      "preferredMode": "browser_session",
       "fallbackMode": "web_fetch",
-      "sources": ["opencli.zhihu.search", "browser_session.zhihu.search", "browser.zhihu.search", "browser.zhihu.answer", "web_fetch.zhihu.page"],
-      "notes": "知乎优先 opencli 复用用户浏览器，必要时再回退用户浏览器会话桥、浏览器和直接网页抓取。"
+      "sources": ["browser_session.zhihu.search", "browser.zhihu.search", "browser.zhihu.answer", "web_fetch.zhihu.page"],
+      "notes": "知乎优先用户浏览器会话，必要时再回退浏览器和直接网页抓取。"
     },
     "kuaishou": {
       "preferredMode": "browser",
@@ -129,10 +129,10 @@
       "notes": "美团优先用户浏览器，重点保留店铺、价格、评分、位置和套餐。"
     },
     "ctrip": {
-      "preferredMode": "opencli",
+      "preferredMode": "browser_session",
       "fallbackMode": "browser",
-      "sources": ["opencli.ctrip.search", "browser_session.ctrip.search", "browser.ctrip.search", "browser.ctrip.hotel", "browser.ctrip.flight"],
-      "notes": "携程优先 opencli 复用用户浏览器，再回退用户浏览器会话桥；重点保留价格、时间、地点、评分和退改规则。"
+      "sources": ["browser_session.ctrip.search", "browser.ctrip.search", "browser.ctrip.hotel", "browser.ctrip.flight"],
+      "notes": "携程优先用户浏览器会话，再回退浏览器；重点保留价格、时间、地点、评分和退改规则。"
     }
   },
   "defaultOutputs": [
