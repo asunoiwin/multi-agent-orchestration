@@ -30,6 +30,17 @@ function getPromptText(event) {
   return String(event?.prompt || '').trim();
 }
 
+function resolveEventAgentId(event) {
+  const direct = String(event?.agentId || '').trim();
+  if (direct) return direct;
+  const nestedDirect = String(event?.agent?.id || event?.agent?.name || event?.context?.agentId || '').trim();
+  if (nestedDirect) return nestedDirect;
+  const sessionKey = String(event?.sessionKey || event?.session || '').trim();
+  const match = sessionKey.match(/^agent:([^:]+):/);
+  if (match?.[1]) return match[1];
+  return 'main';
+}
+
 function sanitizePrompt(prompt) {
   if (!prompt) return '';
   let cleaned = String(prompt);
@@ -50,6 +61,10 @@ function shouldSkip(prompt) {
   if (!prompt) return true;
   if (/\[Subagent Context\]|\[Subagent Task\]:|^# Role:/m.test(prompt)) return true;
   if (/\[cron:[^\]]+\]|你是多 agent 编排调度器|你是任务巡检员|你是每日任务汇总助手/i.test(prompt)) return true;
+  if (/Context nearing limit\. Save critical state to memory-enhanced plugin/i.test(prompt)) return true;
+  if (/Store durable memories only in memory\/\d{4}-\d{2}-\d{2}\.md/i.test(prompt)) return true;
+  if (/Return your summary as plain text; it will be delivered automatically\./i.test(prompt)) return true;
+  if (/memory_enhanced_capture/i.test(prompt) && /NO_REPLY/i.test(prompt)) return true;
   if (/^HEARTBEAT/i.test(prompt)) return true;
   if (/^Continue where you left off\./i.test(prompt)) return true;
   return false;
@@ -164,6 +179,8 @@ function buildContext(prompt, analysis, plan) {
     lines.push('- Treat meeting output as a structured decision artifact, not free-form brainstorming.');
   }
   lines.push('- Spawn or simulate worker/team execution instead of handling all stages sequentially.');
+  lines.push('- When calling sessions_spawn with runtime="subagent", never set streamTo. streamTo is only valid for runtime="acp".');
+  lines.push('- If a sessions_spawn call fails due to invalid parameters, correct the payload and retry once before falling back to single-agent execution.');
   lines.push('- If you still stay single-agent, continue autonomously and state the blocker briefly without asking the user to choose.');
   lines.push('- After each substantial tool/action phase, convert progress into a short human-readable status update instead of silently stopping.');
   lines.push('- If execution is interrupted or resumed after restart, first explain what has been recovered, what stage is active now, and what the next concrete step is.');
@@ -186,12 +203,18 @@ const plugin = {
     api.on('before_agent_start', async (event) => {
       const prompt = sanitizePrompt(getPromptText(event));
       if (shouldSkip(prompt)) return;
-      if (event?.agentId && event.agentId !== 'main') return;
+      const agentId = resolveEventAgentId(event);
+      const mainAgentOnly = api.pluginConfig?.mainAgentOnly !== false;
+      if (mainAgentOnly && agentId !== 'main') return;
       if (typeof analyzeTask !== 'function') return;
 
       try {
         const analysis = await analyzeTask(prompt);
-        const needsMultiAgent = shouldRouteComplexTask(analysis);
+        const isolatedWorkflowAgent = agentId !== 'main';
+        const explicitDeliverableReport = /写到\s+\/[^\s]+\.md/i.test(prompt) && /不要停在计划|直接写报告/i.test(prompt);
+        const needsMultiAgent = isolatedWorkflowAgent && explicitDeliverableReport
+          ? false
+          : shouldRouteComplexTask(analysis);
         const plan = needsMultiAgent && typeof planTask === 'function' ? planTask(prompt) : null;
 
         ensureRuntimeDir();
