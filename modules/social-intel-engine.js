@@ -4,6 +4,9 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const POLICY_FILE = path.join(ROOT, 'config', 'social-intel-policy.json');
 const SKILL_PATH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'skills', 'social-commerce-intel', 'SKILL.md');
+const OPENCLI_SEARCH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'opencli-search.sh');
+const STRUCTURED_SEARCH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'web-search-structured.sh');
+const CONTENT_DISTILL = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'web-content-distill.py');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
@@ -67,7 +70,9 @@ function buildCollectionPlan(routes = [], policy = loadPolicy()) {
     primarySearchTool:
       route.preferredMode === 'api'
         ? 'platform-api'
-        : '/Users/rico/.openclaw/workspace/scripts/web-search-structured.sh',
+        : route.preferredMode === 'opencli'
+          ? OPENCLI_SEARCH
+          : STRUCTURED_SEARCH,
     maxSources: maxSourcesPerPlatform,
     steps: [
       `discover:${route.platform}`,
@@ -77,7 +82,8 @@ function buildCollectionPlan(routes = [], policy = loadPolicy()) {
     ],
     sources: route.sources,
     notes: route.notes,
-    skillPath: route.skillPath
+    skillPath: route.skillPath,
+    contentDistiller: CONTENT_DISTILL
   }));
 }
 
@@ -127,7 +133,7 @@ function buildIntelligencePlan(taskText = '', features = {}, analysis = {}, poli
     evidenceSchema,
     skillPath: SKILL_PATH,
     socialBreadth,
-    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。泛搜索优先使用 /Users/rico/.openclaw/workspace/scripts/web-search-structured.sh，微博可优先使用 API。优先参考 Skill: ${SKILL_PATH}`
+    rationale: `任务涉及社媒/舆情/平台搜索，优先走 ${routes.map((route) => `${route.platform}:${route.preferredMode}`).join(' | ')} 的混合采集路径。支持的平台优先使用 ${OPENCLI_SEARCH} 复用用户浏览器会话；泛搜索回退到 ${STRUCTURED_SEARCH}；网页清洗优先使用 ${CONTENT_DISTILL}。微博可优先使用 API。优先参考 Skill: ${SKILL_PATH}`
   };
 }
 
