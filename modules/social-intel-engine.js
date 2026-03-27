@@ -4,10 +4,11 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const POLICY_FILE = path.join(ROOT, 'config', 'social-intel-policy.json');
 const SKILL_PATH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'skills', 'social-commerce-intel', 'SKILL.md');
-const BROWSER_SESSION_BRIDGE = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'browser-session-bridge.py');
+const SEARCH_PLUGIN_ROOT = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'extensions', 'openclaw-search-orchestrator');
+const BROWSER_SESSION_BRIDGE = path.join(SEARCH_PLUGIN_ROOT, 'scripts', 'browser_session_bridge.py');
 const DESKTOP_ORCHESTRATOR = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'desktop-orchestrator.py');
 const STRUCTURED_SEARCH = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'web-search-structured.sh');
-const CONTENT_DISTILL = path.join(process.env.HOME || '/Users/rico', '.openclaw', 'workspace', 'scripts', 'web-content-distill.py');
+const CONTENT_DISTILL = path.join(SEARCH_PLUGIN_ROOT, 'scripts', 'web_content_distill.py');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
