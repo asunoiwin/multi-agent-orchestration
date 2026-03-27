@@ -16,9 +16,13 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const SCRIPT = path.join(
+const LEGACY_SCRIPT = path.join(
   process.env.OPENCLAW_HOME || path.join(process.env.HOME, '.openclaw'),
   'workspace', 'scripts', 'web-search-structured.sh'
+);
+const ORCHESTRATOR = path.join(
+  process.env.OPENCLAW_HOME || path.join(process.env.HOME, '.openclaw'),
+  'extensions', 'openclaw-search-orchestrator', 'scripts', 'search_orchestrator.py'
 );
 
 /**
@@ -44,10 +48,41 @@ function structuredSearch(query, opts = {}) {
   const mode = opts.mode || 'auto';
   
   try {
-    if (!fs.existsSync(SCRIPT)) {
-      throw new Error(`structured search script missing: ${SCRIPT}`);
+    if (fs.existsSync(ORCHESTRATOR)) {
+      const raw = execFileSync('python3', [ORCHESTRATOR, 'research', JSON.stringify({
+        query: String(query),
+        intent: opts.intent || 'auto',
+        max_results: max,
+        max_deep_results: Math.min(max, 4),
+        max_refine_rounds: 1,
+      })], {
+        encoding: 'utf8',
+        timeout: 120000,
+        maxBuffer: 20 * 1024 * 1024,
+      });
+      const parsed = JSON.parse(raw);
+      return {
+        query: parsed.query,
+        mode: 'orchestrated',
+        fetch_mode: 'deep',
+        confidence: parsed.quality || 'medium',
+        coverage: parsed.coverage || null,
+        followup_queries: parsed.followup_queries || [],
+        results: (parsed.results || []).map((item) => ({
+          title: item.title,
+          url: item.url,
+          source: item.engine,
+          snippet: item.extraction?.summary?.join(' ') || item.snippet || '',
+          evidence: `query_variant=${item.query_variant}; site_focus=${item.site_focus}; fetch_mode=${item.extraction?.fetch_mode || 'direct'}`,
+          confidence: item.extraction?.quality || parsed.quality || 'medium',
+        })),
+      };
     }
-    const raw = execFileSync('bash', [SCRIPT, String(query), String(max), String(mode)], {
+
+    if (!fs.existsSync(LEGACY_SCRIPT)) {
+      throw new Error(`structured search script missing: ${LEGACY_SCRIPT}`);
+    }
+    const raw = execFileSync('bash', [LEGACY_SCRIPT, String(query), String(max), String(mode)], {
       encoding: 'utf8',
       timeout: 30000,
       maxBuffer: 10 * 1024 * 1024,

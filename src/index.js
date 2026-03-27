@@ -98,6 +98,14 @@ function shouldRouteComplexTask(analysis = {}) {
   return false;
 }
 
+function isDesktopExecutionTask(prompt = '') {
+  const text = String(prompt || '');
+  if (!text) return false;
+  const desktopSignals = /下载安装|安装.*客户端|打开应用|打开软件|本机识别码|验证码|远程控制|向日葵|识别码与验证码|通过.*飞书.*发送|通过.*企业微信.*发送|读取.*密码|读取.*验证码|桌面软件|本地软件|前台软件|computer use|desktop/i;
+  const executionSignals = /下载|安装|启动|打开|读取|发送|发给|推送|deliver|report/i;
+  return desktopSignals.test(text) && executionSignals.test(text);
+}
+
 function summarizeTeams(plan = null) {
   const teams = Array.isArray(plan?.teams) ? plan.teams : [];
   return teams.map((team) => {
@@ -222,7 +230,9 @@ const plugin = {
         const explicitDeliverableReport = /写到\s+\/[^\s]+\.md/i.test(prompt) && /不要停在计划|直接写报告/i.test(prompt);
         const needsMultiAgent = isolatedWorkflowAgent && explicitDeliverableReport
           ? false
-          : shouldRouteComplexTask(analysis);
+          : isDesktopExecutionTask(prompt)
+            ? false
+            : shouldRouteComplexTask(analysis);
         const plan = needsMultiAgent && typeof planTask === 'function' ? planTask(prompt) : null;
 
         ensureRuntimeDir();
