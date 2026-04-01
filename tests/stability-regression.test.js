@@ -234,6 +234,48 @@ function testSessionSpawnIncludesThreadFlag() {
   }
 }
 
+function testRecoveredResultsUseArtifactReferences() {
+  const longSummary = `任务总结\n${'A'.repeat(2200)}`;
+  const agent = {
+    taskId: 'task-artifact-ref',
+    workerId: 'worker-artifact-ref',
+    roleId: 'researcher',
+    result: null
+  };
+  const artifactPath = resultRecovery.getRecoveredArtifactPath(agent.taskId, agent.workerId);
+  try { fs.unlinkSync(artifactPath); } catch {}
+  const recovered = resultRecovery.buildRecoveredResult(agent, {
+    taskId: agent.taskId,
+    workerId: agent.workerId,
+    roleId: agent.roleId,
+    file: '/tmp/session-artifact.jsonl',
+    updatedAt: '2026-04-01T00:00:00.000Z',
+    summary: {
+      text: longSummary,
+      rawText: longSummary,
+      stopReason: 'stop',
+      timestamp: '2026-04-01T00:00:00.000Z'
+    },
+    completion: {
+      taskId: agent.taskId,
+      workerId: agent.workerId,
+      status: 'completed',
+      summary: '完成恢复',
+      artifacts: [{ path: '/tmp/report.md', type: 'report' }],
+      handoff: { nextOwner: 'reviewer' }
+    }
+  });
+
+  assert.ok(recovered.evidenceRef && recovered.evidenceRef.path === artifactPath, 'result should point at artifact file');
+  assert.ok(fs.existsSync(artifactPath), 'artifact file should be written');
+  assert.ok(recovered.summary.length < longSummary.length, 'active result summary should stay lightweight');
+  assert.ok(Array.isArray(recovered.artifacts) && recovered.artifacts.length === 1, 'normalized artifacts should be retained');
+
+  const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+  assert.strictEqual(artifact.summary.rawText, longSummary, 'artifact should preserve full raw summary');
+  assert.strictEqual(artifact.normalized.handoff.nextOwner, 'reviewer', 'artifact should preserve handoff payload');
+} 
+
 function run() {
   testMultiStrategyParse();
   testHandleTruncatedOutput();
@@ -248,6 +290,7 @@ function run() {
   testPlannerAssignsSocialIntelRole();
   testExpandedPlatformCoverage();
   testSessionSpawnIncludesThreadFlag();
+  testRecoveredResultsUseArtifactReferences();
   console.log('stability regression tests passed');
 }
 

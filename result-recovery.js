@@ -5,6 +5,7 @@ const path = require('path');
 const ROOT = __dirname;
 const TASKS_DIR = path.join(ROOT, 'tasks');
 const RUNTIME_DIR = path.join(ROOT, 'runtime');
+const RECOVERED_RESULTS_DIR = path.join(RUNTIME_DIR, 'recovered-results');
 const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
 const AGENTS_ROOT = path.join(process.env.HOME || '', '.openclaw', 'agents');
 const MAPPING_FILE = path.join(ROOT, 'config', 'agent-mapping.json');
@@ -19,6 +20,104 @@ function readJson(file, fallback = null) {
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+function sanitizePathSegment(value, fallback = 'unknown') {
+  const text = String(value || '').trim();
+  if (!text) return fallback;
+  return text.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || fallback;
+}
+
+function trimSummary(text, maxLength = 1200) {
+  if (typeof text !== 'string') return '';
+  const normalized = text.replace(/\s+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function normalizeStructuredCompletion(completion) {
+  if (!completion || typeof completion !== 'object') return null;
+  const normalized = {
+    taskId: completion.taskId || null,
+    workerId: completion.workerId || null,
+    status: typeof completion.status === 'string' ? completion.status : null,
+    summary: typeof completion.summary === 'string' ? trimSummary(completion.summary, 800) : null,
+    nextStep: typeof completion.nextStep === 'string' ? trimSummary(completion.nextStep, 400) : null,
+    handoff: completion.handoff && typeof completion.handoff === 'object' ? completion.handoff : null,
+    blockers: Array.isArray(completion.blockers) ? completion.blockers.slice(0, 10) : null,
+    artifacts: Array.isArray(completion.artifacts) ? completion.artifacts.slice(0, 20) : null
+  };
+  return Object.values(normalized).some((value) => value !== null) ? normalized : null;
+}
+
+function getRecoveredArtifactPath(taskId, workerId) {
+  const taskDir = path.join(RECOVERED_RESULTS_DIR, sanitizePathSegment(taskId, 'task'));
+  const workerFile = `${sanitizePathSegment(workerId, 'worker')}.json`;
+  return path.join(taskDir, workerFile);
+}
+
+function persistRecoveredArtifact(context, evidence, summaryText, structuredCompletion) {
+  const artifactPath = getRecoveredArtifactPath(context.taskId, context.workerId || context.roleId);
+  writeJson(artifactPath, {
+    taskId: context.taskId,
+    workerId: context.workerId || null,
+    roleId: context.roleId || null,
+    sessionId: context.sessionId || null,
+    sourceFile: evidence.file || null,
+    updatedAt: evidence.updatedAt || null,
+    summary: {
+      text: evidence.summary?.text || null,
+      rawText: evidence.summary?.rawText || evidence.summary?.text || null,
+      stopReason: evidence.summary?.stopReason || null,
+      timestamp: evidence.summary?.timestamp || null
+    },
+    structuredCompletion: evidence.completion || null,
+    normalized: {
+      summary: summaryText || null,
+      structuredCompletion,
+      artifacts: structuredCompletion?.artifacts || null,
+      handoff: structuredCompletion?.handoff || null,
+      nextStep: structuredCompletion?.nextStep || null
+    },
+    persistedAt: new Date().toISOString()
+  });
+  return artifactPath;
+}
+
+function buildRecoveredResult(agent, evidence) {
+  const normalizedCompletion = normalizeStructuredCompletion(evidence.completion || null);
+  const summaryText = trimSummary(
+    evidence.summary?.text ||
+    (typeof evidence.completion?.summary === 'string' ? evidence.completion.summary : ''),
+    1200
+  );
+  const artifactPath = persistRecoveredArtifact(
+    {
+      taskId: agent.taskId,
+      workerId: agent.workerId || agent.roleId,
+      roleId: agent.roleId || null,
+      sessionId: agent.sessionId || evidence.sessionId || null
+    },
+    evidence,
+    summaryText,
+    normalizedCompletion
+  );
+  return {
+    ...(agent.result || {}),
+    sessionFile: evidence.file || null,
+    recoveredAt: new Date().toISOString(),
+    summary: summaryText,
+    stopReason: evidence.summary?.stopReason || null,
+    structuredCompletion: normalizedCompletion,
+    artifacts: normalizedCompletion?.artifacts || null,
+    handoff: normalizedCompletion?.handoff || null,
+    nextStep: normalizedCompletion?.nextStep || null,
+    evidenceRef: {
+      type: 'json',
+      path: artifactPath
+    },
+    reputation: agent.reputationState?.receipt || agent.result?.reputation || null
+  };
 }
 
 // P0 Fix: file locking to prevent concurrent write races on ACTIVE_FILE
@@ -353,15 +452,11 @@ function syncActiveAgentsFromSessions() {
           changed += 1;
         }
       }
-      agent.result = {
-        ...(agent.result || {}),
-        sessionFile: activeMatch.file,
-        recoveredAt: new Date().toISOString(),
-        summary: summaryText,
-        stopReason: summarySource.summary.stopReason || null,
-        structuredCompletion: match.completion || null,
-        reputation: agent.reputationState?.receipt || agent.result?.reputation || null
-      };
+      agent.result = buildRecoveredResult(agent, {
+        ...activeMatch,
+        completion: match.completion || activeMatch.completion || null,
+        summary: summarySource.summary || activeMatch.summary || null
+      });
     } else if (['spawning', 'waiting'].includes(agent.status)) {
       agent.status = 'running';
       changed += 1;
@@ -779,7 +874,13 @@ function enhancedRecovery(agent, config = null) {
           ...agent, 
           sessionId: found.sessionId,
           lastSessionFile: found.file,
-          result: { summary: found.summary, structuredCompletion: found.completion }
+          result: buildRecoveredResult(
+            {
+              ...agent,
+              sessionId: found.sessionId || agent.sessionId || null
+            },
+            found
+          )
         }, 
         success: true 
       };
@@ -900,6 +1001,8 @@ module.exports = {
   enhancedRecovery,
   validateAgentState,
   persistWithSnapshot,
+  buildRecoveredResult,
+  getRecoveredArtifactPath,
   // Phase 3 P1: Result Recovery Enhancement
   multiStrategyParse,
   handleTruncatedOutput,
