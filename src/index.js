@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
 
 const pluginRoot = path.resolve(__dirname, '..');
 const analyzerPath = path.join(pluginRoot, 'task-analyzer.cjs');
@@ -125,11 +126,17 @@ function summarizeMeeting(plan = null) {
   return `${meetingPlan.mode || 'structured_panel'} / rounds=${meetingPlan.rounds || 0} / participants=${participants}`;
 }
 
-function buildExecutionSnapshot(plan = null) {
+function buildRoutingTaskId(prompt) {
+  const digest = crypto.createHash('sha1').update(String(prompt || '')).digest('hex').slice(0, 12);
+  return `route-${digest}`;
+}
+
+function buildExecutionSnapshot(taskId, plan = null) {
   const teams = Array.isArray(plan?.teams) ? plan.teams : [];
   const syncPlan = Array.isArray(plan?.syncPlan) ? plan.syncPlan : [];
   return {
     generated_at: new Date().toISOString(),
+    taskId,
     executionMode: plan?.executionMode || 'single',
     meetingMode: plan?.meetingPlan?.enabled ? plan.meetingPlan.mode : 'none',
     intelligenceMode: plan?.intelligencePlan?.enabled ? plan.intelligencePlan.mode : 'none',
@@ -147,10 +154,11 @@ function buildExecutionSnapshot(plan = null) {
   };
 }
 
-function buildMeetingArtifact(prompt, analysis, plan) {
+function buildMeetingArtifact(taskId, prompt, analysis, plan) {
   const meetingPlan = plan?.meetingPlan || null;
   return {
     generated_at: new Date().toISOString(),
+    taskId,
     request: prompt,
     analysis: {
       decision: analysis?.decision || 'single',
@@ -163,13 +171,15 @@ function buildMeetingArtifact(prompt, analysis, plan) {
 }
 
 function buildContext(prompt, analysis, plan) {
+  const taskId = buildRoutingTaskId(prompt);
   const score = Number(analysis?.score ?? analysis?.total_score ?? 0);
   const decision = analysis?.decision || 'single';
   const categories = Array.isArray(analysis?.categories) ? analysis.categories : [];
   const teamSummary = summarizeTeams(plan);
-  const snapshot = buildExecutionSnapshot(plan);
+  const snapshot = buildExecutionSnapshot(taskId, plan);
   const lines = [
     'Multi-agent routing decision:',
+    `- taskId: ${taskId}`,
     `- score: ${score}`,
     `- decision: ${decision}`,
   ];
@@ -204,6 +214,7 @@ function buildContext(prompt, analysis, plan) {
   lines.push('- Only use NO_REPLY when there is truly no new progress, no recovery event, and no next-step information worth surfacing.');
 
   return {
+    taskId,
     context: lines.join('\n'),
     snapshot,
   };
@@ -225,25 +236,27 @@ const plugin = {
       if (mainAgentOnly && agentId !== 'main') return;
       if (typeof analyzeTask !== 'function') return;
 
-      try {
-        const analysis = await analyzeTask(prompt);
-        const isolatedWorkflowAgent = agentId !== 'main';
+	      try {
+	        const analysis = await analyzeTask(prompt);
+	        const isolatedWorkflowAgent = agentId !== 'main';
         const explicitDeliverableReport = /写到\s+\/[^\s]+\.md/i.test(prompt) && /不要停在计划|直接写报告/i.test(prompt);
         const needsMultiAgent = isolatedWorkflowAgent && explicitDeliverableReport
           ? false
           : isDesktopExecutionTask(prompt)
             ? false
             : shouldRouteComplexTask(analysis);
-        const plan = needsMultiAgent && typeof planTask === 'function' ? planTask(prompt) : null;
+	        const plan = needsMultiAgent && typeof planTask === 'function' ? planTask(prompt) : null;
+          const taskId = buildRoutingTaskId(prompt);
 
-        ensureRuntimeDir();
-        fs.writeFileSync(
-          decisionPath,
-          JSON.stringify(
-            {
-              generated_at: new Date().toISOString(),
-              score: Number(analysis?.score ?? analysis?.total_score ?? 0),
-              needsMultiAgent,
+	        ensureRuntimeDir();
+	        fs.writeFileSync(
+	          decisionPath,
+	          JSON.stringify(
+	            {
+	              generated_at: new Date().toISOString(),
+                taskId,
+	              score: Number(analysis?.score ?? analysis?.total_score ?? 0),
+	              needsMultiAgent,
               decision: analysis?.decision || null,
               categories: analysis?.categories || [],
               meeting: analysis?.meeting || null,
@@ -260,13 +273,14 @@ const plugin = {
           return;
         }
 
-        const { context, snapshot } = buildContext(prompt, analysis, plan);
+	        const { context, snapshot } = buildContext(prompt, analysis, plan);
 
         fs.writeFileSync(
           routingPath,
           JSON.stringify(
             {
               generated_at: new Date().toISOString(),
+              taskId,
               request: prompt,
               analysis,
               plan,
@@ -277,7 +291,7 @@ const plugin = {
         );
 
         fs.writeFileSync(executionPath, JSON.stringify(snapshot, null, 2));
-        fs.writeFileSync(meetingPath, JSON.stringify(buildMeetingArtifact(prompt, analysis, plan), null, 2));
+        fs.writeFileSync(meetingPath, JSON.stringify(buildMeetingArtifact(taskId, prompt, analysis, plan), null, 2));
 
         api.logger.info?.('[openclaw-multi-agent] injecting multi-agent routing context');
         return {
