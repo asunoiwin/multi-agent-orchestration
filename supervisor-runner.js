@@ -327,6 +327,9 @@ function spawnAgent(subtask, taskContext) {
     cleanup: resolved.cleanup || 'keep',
     timeoutSeconds: resolved.runTimeoutSeconds || 1800 // 30分钟超时
   };
+  if (spawnConfig.runtime === 'subagent' && spawnConfig.mode === 'session') {
+    spawnConfig.thread = true;
+  }
   
   return {
     config: spawnConfig,
@@ -809,6 +812,7 @@ if (require.main === module) {
         console.log(`  sessions_spawn({`);
         console.log(`    runtime: "subagent",`);
         console.log(`    mode: "session",`);
+        console.log(`    thread: true,`);
         console.log(`    label: "${s.label}",`);
         console.log(`    model: "minimax",`);
         console.log(`    task: "<see runtime/active-agents.json for full prompt>"`);

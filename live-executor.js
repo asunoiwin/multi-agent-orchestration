@@ -30,6 +30,14 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+function normalizeSpawnCall(call) {
+  const normalized = { ...call };
+  if (normalized.runtime === 'subagent' && normalized.mode === 'session') {
+    normalized.thread = true;
+  }
+  return normalized;
+}
+
 function resolveAgent(roleId) {
   const mapping = readJson(MAPPING_FILE, { mapping: {}, defaults: {} });
   const mapped = mapping.mapping[roleId];
@@ -59,7 +67,7 @@ async function execute(taskText) {
   const spawnCalls = [];
   for (const inst of result.spawnInstructions) {
     const resolved = resolveAgent(inst.roleId);
-    spawnCalls.push({
+    spawnCalls.push(normalizeSpawnCall({
       label: inst.label,
       workerId: inst.spawnCall?.metadata?.workerId || inst.roleId,
       roleId: inst.roleId,
@@ -78,7 +86,7 @@ async function execute(taskText) {
         teamId: inst.spawnCall?.metadata?.teamId || null,
         stage: inst.spawnCall?.metadata?.stage || null
       }
-    });
+    }));
   }
 
   // Step 3: 把待执行的后续 agent 也准备好（串行模式下 waiting 的）

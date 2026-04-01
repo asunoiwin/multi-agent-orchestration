@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const resultRecovery = require('../result-recovery.js');
 const supervisorRunner = require('../supervisor-runner.js');
@@ -195,6 +197,43 @@ function testExpandedPlatformCoverage() {
   assert.ok(String(plan.skillPath || '').includes('social-commerce-intel'), 'social-commerce skill path should be present');
 }
 
+function testSessionSpawnIncludesThreadFlag() {
+  const mappingFile = path.join(__dirname, '..', 'config', 'agent-mapping.json');
+  const originalMapping = fs.readFileSync(mappingFile, 'utf8');
+  const taskContext = {
+    id: 'task-session-spawn',
+    task: '并行调研 Claude Code 架构',
+    context: {
+      sessionId: 'session-spawn',
+      taskRoot: '/tmp'
+    },
+    summary: { agents: [] }
+  };
+  const subtask = {
+    workerId: 'researcher-1',
+    roleId: 'researcher',
+    teamId: 'discovery-research-team',
+    stage: 'discovery',
+    title: 'Researcher',
+    description: '调研外部资料',
+    skills: ['read', 'web_search'],
+    deny: ['write'],
+    memory: { scope: 'task', items: ['evidence'] },
+    coworkers: [],
+    collaborationMode: 'parallel'
+  };
+  try {
+    const parsed = JSON.parse(originalMapping);
+    parsed.defaults = { ...(parsed.defaults || {}), mode: 'session' };
+    fs.writeFileSync(mappingFile, JSON.stringify(parsed, null, 2));
+    const spawned = supervisorRunner.spawnAgent(subtask, taskContext);
+    assert.strictEqual(spawned.config.mode, 'session', 'spawn config should respect session mode defaults');
+    assert.strictEqual(spawned.config.thread, true, 'session-mode subagents must set thread=true');
+  } finally {
+    fs.writeFileSync(mappingFile, originalMapping);
+  }
+}
+
 function run() {
   testMultiStrategyParse();
   testHandleTruncatedOutput();
@@ -208,6 +247,7 @@ function run() {
   testSocialIntelRouting();
   testPlannerAssignsSocialIntelRole();
   testExpandedPlatformCoverage();
+  testSessionSpawnIncludesThreadFlag();
   console.log('stability regression tests passed');
 }
 

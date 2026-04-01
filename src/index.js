@@ -196,6 +196,7 @@ function buildContext(prompt, analysis, plan) {
   }
   lines.push('- Spawn or simulate worker/team execution instead of handling all stages sequentially.');
   lines.push('- When calling sessions_spawn with runtime="subagent", never set streamTo. streamTo is only valid for runtime="acp".');
+  lines.push('- When calling sessions_spawn with runtime="subagent" and mode="session", always set thread=true.');
   lines.push('- If a sessions_spawn call fails due to invalid parameters, correct the payload and retry once before falling back to single-agent execution.');
   lines.push('- If you still stay single-agent, continue autonomously and state the blocker briefly without asking the user to choose.');
   lines.push('- After each substantial tool/action phase, convert progress into a short human-readable status update instead of silently stopping.');
