@@ -13,6 +13,7 @@ const executionPath = path.join(runtimeDir, 'multi-agent-execution.json');
 const meetingPath = path.join(runtimeDir, 'multi-agent-meeting.json');
 const routingArtifactsDir = path.join(runtimeDir, 'routing-artifacts');
 const taskBriefDir = path.join(pluginRoot, 'runtime', 'task-briefs');
+const transcriptStore = require('../transcript-store');
 
 let analyzeTask = null;
 let planTask = null;
@@ -211,6 +212,7 @@ function getCurrentRuntimeStatus(taskId = null) {
     routing,
     execution,
     meeting,
+    transcript: effectiveTaskId ? transcriptStore.summarizeTranscript(effectiveTaskId) : null,
     briefPath,
     brief,
   };
@@ -515,6 +517,43 @@ const plugin = {
       }
     });
 
+    api.registerTool?.({
+      name: 'multi_agent_task_transcript',
+      label: 'Multi-Agent Task Transcript',
+      description: 'Read the append-only structured transcript for the current or specified multi-agent task.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' },
+          limit: { type: 'number' }
+        },
+        required: []
+      },
+      execute: async (args = {}) => {
+        const status = getCurrentRuntimeStatus(args.task_id || null);
+        const taskId = args.task_id || status.taskId || null;
+        if (!taskId) {
+          return {
+            content: [{ type: 'text', text: 'No transcript available.' }],
+            details: { success: false, reason: 'missing_task_id' }
+          };
+        }
+        const transcript = transcriptStore.readTranscript(taskId, Number(args.limit || 20));
+        const latest = transcript.entries[transcript.entries.length - 1] || null;
+        const text = [
+          `task transcript: ${taskId}`,
+          `entries: ${transcript.entries.length}`,
+          `file: ${transcript.file}`,
+          `latestKind: ${latest?.kind || 'none'}`,
+          `latestAt: ${latest?.ts || 'n/a'}`
+        ].join('\n');
+        return {
+          content: [{ type: 'text', text }],
+          details: { success: true, transcript }
+        };
+      }
+    });
+
     api.on('before_prompt_build', async (event, ctx) => {
       if (isInternalControlEvent(event, ctx)) return;
       if (api.pluginConfig?.injectBeforePromptBuild === false) return;
@@ -538,8 +577,8 @@ const plugin = {
         const taskId = buildRoutingTaskId(prompt);
 
         ensureRuntimeDir();
-	        fs.writeFileSync(
-	          decisionPath,
+        fs.writeFileSync(
+          decisionPath,
 	          JSON.stringify(
 	            {
 	              generated_at: new Date().toISOString(),
@@ -557,6 +596,13 @@ const plugin = {
             2
           )
         );
+        transcriptStore.appendTranscriptEvent(taskId, 'routing_decision', {
+          score: Number(analysis?.score ?? analysis?.total_score ?? 0),
+          decision: analysis?.decision || null,
+          categories: analysis?.categories || [],
+          needsMultiAgent,
+          requestPreview: prompt.slice(0, 200)
+        });
 
         if (!needsMultiAgent) {
           return;
@@ -586,6 +632,14 @@ const plugin = {
 
         fs.writeFileSync(executionPath, JSON.stringify(snapshot, null, 2));
         fs.writeFileSync(meetingPath, JSON.stringify(buildMeetingArtifact(taskId, prompt, analysis, planLite), null, 2));
+        transcriptStore.appendTranscriptEvent(taskId, 'routing_context_generated', {
+          executionMode: planLite?.executionMode || 'single',
+          collaborationModel: planLite?.collaborationModel || 'solo',
+          teams: Array.isArray(planLite?.teams) ? planLite.teams.length : 0,
+          syncPlan: Array.isArray(planLite?.syncPlan) ? planLite.syncPlan.length : 0,
+          artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.length : 0,
+          externalized
+        });
 
         api.logger.info?.('[openclaw-multi-agent] injecting multi-agent routing context');
         return {

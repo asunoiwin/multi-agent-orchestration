@@ -21,6 +21,7 @@ const AGENTS_ROOT = path.join(process.env.HOME || '', '.openclaw', 'agents');
 const MAPPING_FILE = path.join(ROOT, 'config', 'agent-mapping.json');
 const { buildAgentPrompt } = require('./supervisor-runner');
 const { scoreRole, getRoleProfile, getResourceBudget } = require('./modules/reputation-engine');
+const { appendTranscriptEvent } = require('./transcript-store');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
@@ -116,6 +117,20 @@ function buildRecoveredResult(agent, evidence) {
     summaryText,
     normalizedCompletion
   );
+  appendTranscriptEvent(agent.taskId, 'worker_result_recovered', {
+    workerId: agent.workerId || agent.roleId || null,
+    roleId: agent.roleId || null,
+    sessionId: agent.sessionId || evidence.sessionId || null,
+    status: normalizedCompletion?.status || null,
+    summary: summaryText || null,
+    nextStep: normalizedCompletion?.nextStep || null,
+    protocolViolation: normalizedCompletion?._protocolViolation || null,
+    lowConfidence: Boolean(normalizedCompletion?._lowConfidence),
+    evidenceRef: {
+      type: 'json',
+      path: artifactPath
+    }
+  });
   return {
     ...(agent.result || {}),
     sessionFile: evidence.file || null,

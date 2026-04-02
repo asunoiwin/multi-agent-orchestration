@@ -9,6 +9,7 @@ const watchdog = require('../orchestration-watchdog.js');
 const cleanupRuntimeModule = require('../cleanup-runtime.js');
 const { planTask } = require('../dynamic-orchestrator.js');
 const taskIntake = require('../task-intake.js');
+const transcriptStore = require('../transcript-store.js');
 const { shouldUseMeeting } = require('../modules/deliberation-engine.js');
 const { getRoleProfile, getResourceBudget } = require('../modules/reputation-engine.js');
 const { buildIntelligencePlan, hasSocialIntent } = require('../modules/social-intel-engine.js');
@@ -354,7 +355,9 @@ function testRecoveredResultsUseArtifactReferences() {
     result: null
   };
   const artifactPath = resultRecovery.getRecoveredArtifactPath(agent.taskId, agent.workerId);
+  const transcriptPath = transcriptStore.getTranscriptPath(agent.taskId);
   try { fs.unlinkSync(artifactPath); } catch {}
+  try { fs.unlinkSync(transcriptPath); } catch {}
   const recovered = resultRecovery.buildRecoveredResult(agent, {
     taskId: agent.taskId,
     workerId: agent.workerId,
@@ -385,7 +388,19 @@ function testRecoveredResultsUseArtifactReferences() {
   const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
   assert.strictEqual(artifact.summary.rawText, longSummary, 'artifact should preserve full raw summary');
   assert.strictEqual(artifact.normalized.handoff.nextOwner, 'reviewer', 'artifact should preserve handoff payload');
+  const transcript = transcriptStore.readTranscript(agent.taskId, 10);
+  assert.ok(transcript.entries.some((entry) => entry.kind === 'worker_result_recovered'), 'recovery should append transcript event');
 } 
+
+function testTaskIntakeWritesTranscriptEvent() {
+  const queued = taskIntake.enqueue('为 transcript store 做一次最小验证', 'manual', { requestedBy: 'test-suite' });
+  assert.ok(queued && queued.id, 'task intake should enqueue synthetic task');
+  const transcript = transcriptStore.readTranscript(queued.id, 10);
+  assert.ok(transcript.entries.some((entry) => entry.kind === 'task_intake'), 'task intake should append transcript event');
+  try { fs.unlinkSync(queued.file); } catch {}
+  try { fs.unlinkSync(queued.briefPath); } catch {}
+  try { fs.unlinkSync(transcript.file); } catch {}
+}
 
 function testCleanupRuntimePrunesUnreferencedRecoveredArtifacts() {
   const tempRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'openclaw-cleanup-'));
@@ -437,6 +452,7 @@ testTaskIntakeRejectsInternalControlPayload();
   testMalformedFencedJsonStopsFallbackParsing();
   testRuntimeStatusReadsLatestTaskBrief();
   testRecoveredResultsUseArtifactReferences();
+  testTaskIntakeWritesTranscriptEvent();
   testCleanupRuntimePrunesUnreferencedRecoveredArtifacts();
   console.log('stability regression tests passed');
 }

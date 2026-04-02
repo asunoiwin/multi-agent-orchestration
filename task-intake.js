@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const { planTask } = require('./dynamic-orchestrator');
+const { appendTranscriptEvent } = require('./transcript-store');
 
 const ROOT = __dirname;
 const STATE_DIR = path.join(ROOT, 'runtime');
@@ -230,6 +231,15 @@ function enqueue(taskText, source = 'manual', context = {}) {
   const file = path.join(TASKS_DIR, `${id}.json`);
   fs.writeFileSync(file, JSON.stringify(payload, null, 2));
   const briefPath = writeTaskBrief(payload);
+  appendTranscriptEvent(id, 'task_intake', {
+    source,
+    intent: payload.intent,
+    status: payload.status,
+    taskRoot: normalizedContext.taskRoot,
+    briefPath,
+    executionMode: plan.executionMode || 'single',
+    collaborationModel: plan.collaborationModel || 'solo'
+  });
   return { id, file, payload, briefPath };
 }
 
