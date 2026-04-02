@@ -270,6 +270,81 @@ Read HEARTBEAT.md if it exists`;
   assert.strictEqual(taskIntake.enqueue(controlTask, 'manual', {}), null, 'control payload should not create a task');
 }
 
+function testMalformedFencedJsonStopsFallbackParsing() {
+  const malformed = [
+    '任务结果如下：',
+    '```json',
+    '{"taskId":"task-1","workerId":"worker-1","status":"completed"',
+    '```',
+    '另外普通文本里还出现了 status=completed taskId=task-1 workerId=worker-1'
+  ].join('\n');
+  const completion = resultRecovery.extractStructuredCompletion(malformed);
+  assert.ok(completion, 'malformed fenced json should still produce a protocol result');
+  assert.strictEqual(completion._protocolViolation, 'malformed-json-block');
+  assert.strictEqual(completion.status, 'protocol_violation');
+  assert.strictEqual(completion.taskId, null, 'protocol violation must not fall through to keyword extraction');
+  const confidence = resultRecovery.calculateConfidence({
+    status: 'completed',
+    result: { structuredCompletion: completion, summary: malformed },
+  });
+  assert.ok(confidence <= 0.2, `protocol violations should remain low confidence, got ${confidence}`);
+  const recovered = resultRecovery.buildRecoveredResult({
+    taskId: 'task-1',
+    workerId: 'worker-1',
+    roleId: 'researcher',
+    result: null
+  }, {
+    taskId: 'task-1',
+    workerId: 'worker-1',
+    roleId: 'researcher',
+    file: '/tmp/session-protocol.jsonl',
+    updatedAt: '2026-04-02T00:00:00.000Z',
+    summary: {
+      text: malformed,
+      rawText: malformed,
+      stopReason: 'stop',
+      timestamp: '2026-04-02T00:00:00.000Z'
+    },
+    completion
+  });
+  assert.strictEqual(recovered.structuredCompletion._protocolViolation, 'malformed-json-block', 'normalized completion must retain protocol violation markers');
+}
+
+function testRuntimeStatusReadsLatestTaskBrief() {
+  const plugin = require('../src/index.js');
+  const runtimeDir = path.join(process.env.HOME, '.openclaw', 'workspace', '.openclaw');
+  const briefDir = path.join(path.dirname(__dirname), 'runtime', 'task-briefs');
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.mkdirSync(briefDir, { recursive: true });
+  const routingBackup = fs.existsSync(path.join(runtimeDir, 'multi-agent-routing.json'))
+    ? fs.readFileSync(path.join(runtimeDir, 'multi-agent-routing.json'), 'utf8')
+    : null;
+  const briefPath = path.join(briefDir, 'task-brief-test.json');
+  const briefPayload = {
+    taskId: 'task-brief-test',
+    task: '生成多 agent 任务摘要',
+    executionMode: 'hybrid',
+    collaborationModel: 'company',
+    selectedRoles: [{ id: 'solution-architect' }],
+    teams: [{ id: 'team-1' }]
+  };
+  try {
+    fs.writeFileSync(path.join(runtimeDir, 'multi-agent-routing.json'), JSON.stringify({ taskId: 'task-brief-test', artifactRefs: [] }, null, 2));
+    fs.writeFileSync(briefPath, JSON.stringify(briefPayload, null, 2));
+    const status = plugin.getCurrentRuntimeStatus();
+    assert.strictEqual(status.taskId, 'task-brief-test');
+    assert.strictEqual(status.brief.task, '生成多 agent 任务摘要');
+    assert.strictEqual(status.briefPath, briefPath);
+  } finally {
+    if (routingBackup == null) {
+      try { fs.unlinkSync(path.join(runtimeDir, 'multi-agent-routing.json')); } catch {}
+    } else {
+      fs.writeFileSync(path.join(runtimeDir, 'multi-agent-routing.json'), routingBackup);
+    }
+    try { fs.unlinkSync(briefPath); } catch {}
+  }
+}
+
 function testRecoveredResultsUseArtifactReferences() {
   const longSummary = `任务总结\n${'A'.repeat(2200)}`;
   const agent = {
@@ -359,6 +434,8 @@ testExpandedPlatformCoverage();
 testInternalControlPayloadIsSanitizedAndSkipped();
 testSessionSpawnIncludesThreadFlag();
 testTaskIntakeRejectsInternalControlPayload();
+  testMalformedFencedJsonStopsFallbackParsing();
+  testRuntimeStatusReadsLatestTaskBrief();
   testRecoveredResultsUseArtifactReferences();
   testCleanupRuntimePrunesUnreferencedRecoveredArtifacts();
   console.log('stability regression tests passed');

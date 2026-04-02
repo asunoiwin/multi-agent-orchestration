@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+/**
+ * Result Recovery + Structured Completion Engine
+ * Version: 2.1 — JSON block enforcement + confidence scoring
+ * 
+ * Key changes from v2.0:
+ * - extractStructuredCompletion: 3-tier strategy with strict fallthrough
+ * - calculateConfidence: _jsonBlockFound flag drives score difference
+ * - All fallback strategies tagged with _lowConfidence when JSON block is absent
+ */
+
 const fs = require('fs');
 const path = require('path');
 
@@ -45,7 +55,11 @@ function normalizeStructuredCompletion(completion) {
     nextStep: typeof completion.nextStep === 'string' ? trimSummary(completion.nextStep, 400) : null,
     handoff: completion.handoff && typeof completion.handoff === 'object' ? completion.handoff : null,
     blockers: Array.isArray(completion.blockers) ? completion.blockers.slice(0, 10) : null,
-    artifacts: Array.isArray(completion.artifacts) ? completion.artifacts.slice(0, 20) : null
+    artifacts: Array.isArray(completion.artifacts) ? completion.artifacts.slice(0, 20) : null,
+    _jsonBlockFound: typeof completion._jsonBlockFound === 'boolean' ? completion._jsonBlockFound : null,
+    _fallbackStrategy: typeof completion._fallbackStrategy === 'string' ? completion._fallbackStrategy : null,
+    _lowConfidence: completion._lowConfidence === true ? true : null,
+    _protocolViolation: typeof completion._protocolViolation === 'string' ? completion._protocolViolation : null
   };
   return Object.values(normalized).some((value) => value !== null) ? normalized : null;
 }
@@ -314,18 +328,55 @@ function extractAssistantSummary(entries) {
 
 function extractStructuredCompletion(text) {
   if (!text) return null;
+  // Strategy 1: Fenced JSON block (HIGHEST confidence — required for full score)
   const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
+  let malformedJsonBlock = false;
   for (let idx = matches.length - 1; idx >= 0; idx -= 1) {
     const raw = matches[idx][1]?.trim();
     if (!raw) continue;
     try {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object' && parsed.taskId && parsed.workerId) {
-        return parsed;
+        return { ...parsed, _jsonBlockFound: true };
       }
     } catch {
-      // Ignore malformed blocks and keep scanning older ones.
+      malformedJsonBlock = true;
     }
+  }
+  if (malformedJsonBlock) {
+    return {
+      status: 'protocol_violation',
+      taskId: null,
+      workerId: null,
+      _jsonBlockFound: false,
+      _protocolViolation: 'malformed-json-block',
+      _lowConfidence: true
+    };
+  }
+  // Strategy 2: Inline JSON (MEDIUM confidence — partial only)
+  const inlineMatch = text.match(/{[\s\S]*?"taskId"[\s\S]*?"(workerId|roleId)"[\s\S]*?}/);
+  if (inlineMatch) {
+    try {
+      const parsed = JSON.parse(inlineMatch[0]);
+      if (parsed && typeof parsed === 'object') {
+        return { ...parsed, _jsonBlockFound: false, _fallbackStrategy: 'inline-json' };
+      }
+    } catch { /* fall through */ }
+  }
+  // Strategy 3: Keyword extraction (LOW confidence — only when no JSON at all found)
+  // Only used as absolute last resort, tagged distinctly
+  const statusMatch = text.match(/(?:^|[{\s,])["']?status["']?\s*[:=]\s*["']?([a-zA-Z_-]+)/i);
+  const taskIdMatch = text.match(/(?:^|[{\s,])["']?taskId["']?\s*[:=]\s*["']?([^\s"',}]+)/i);
+  const workerIdMatch = text.match(/(?:^|[{\s,])["']?workerId["']?\s*[:=]\s*["']?([^\s"',}]+)/i);
+  if (statusMatch || taskIdMatch) {
+    return {
+      status: statusMatch ? statusMatch[1].toLowerCase() : 'unknown',
+      taskId: taskIdMatch ? taskIdMatch[1] : null,
+      workerId: workerIdMatch ? workerIdMatch[1] : null,
+      _jsonBlockFound: false,
+      _fallbackStrategy: 'keyword-extract',
+      _lowConfidence: true
+    };
   }
   return null;
 }
@@ -333,7 +384,7 @@ function extractStructuredCompletion(text) {
 function getEvidenceScore(summary, completion) {
   let score = 0;
   if (summary?.text) score += 10;
-  if (completion) score += 100;
+  if (completion && !completion._protocolViolation) score += 100;
   if (/<final>|任务总结|交付|完成|verified|done/i.test(summary?.text || '')) {
     score += 20;
   }
@@ -1184,7 +1235,21 @@ function calculateConfidence(agent) {
   // Result quality
   if (agent.result) {
     if (agent.result.structuredCompletion) {
-      score += 25;
+      // JSON block found → full score; keyword-extract fallback → reduced score
+      const completion = agent.result.structuredCompletion;
+      if (completion._protocolViolation) {
+        return Math.min(score, 15) / maxScore;
+      } else if (completion._jsonBlockFound === true) {
+        score += 25; // High confidence: clean JSON block received
+      } else if (completion._jsonBlockFound === false) {
+        score += 8;  // Low confidence: keyword-extract fallback only
+      } else {
+        score += 15; // Unknown strategy, medium
+      }
+      // Penalize explicitly low-confidence results
+      if (completion._lowConfidence) {
+        score = Math.min(score, 30); // Cap at low confidence ceiling
+      }
     }
     if (agent.result.summary) {
       const summaryLen = agent.result.summary.length;

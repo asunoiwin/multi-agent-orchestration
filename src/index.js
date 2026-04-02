@@ -12,6 +12,7 @@ const routingPath = path.join(runtimeDir, 'multi-agent-routing.json');
 const executionPath = path.join(runtimeDir, 'multi-agent-execution.json');
 const meetingPath = path.join(runtimeDir, 'multi-agent-meeting.json');
 const routingArtifactsDir = path.join(runtimeDir, 'routing-artifacts');
+const taskBriefDir = path.join(pluginRoot, 'runtime', 'task-briefs');
 
 let analyzeTask = null;
 let planTask = null;
@@ -165,6 +166,54 @@ function summarizeMeeting(plan = null) {
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+function readJson(file, fallback = null) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+
+function getTaskBriefPath(taskId) {
+  if (!taskId) return null;
+  return path.join(taskBriefDir, `${taskId}.json`);
+}
+
+function getLatestTaskBriefPath() {
+  try {
+    const files = fs.readdirSync(taskBriefDir)
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => ({
+        name,
+        file: path.join(taskBriefDir, name),
+        mtimeMs: fs.statSync(path.join(taskBriefDir, name)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
+    return files[0]?.file || null;
+  } catch {
+    return null;
+  }
+}
+
+function getCurrentRuntimeStatus(taskId = null) {
+  const decision = readJson(decisionPath, null);
+  const routing = readJson(routingPath, null);
+  const execution = readJson(executionPath, null);
+  const meeting = readJson(meetingPath, null);
+  const effectiveTaskId = taskId || routing?.taskId || decision?.taskId || execution?.taskId || null;
+  const briefPath = getTaskBriefPath(effectiveTaskId) || getLatestTaskBriefPath();
+  const brief = briefPath ? readJson(briefPath, null) : null;
+  return {
+    taskId: effectiveTaskId || brief?.taskId || null,
+    decision,
+    routing,
+    execution,
+    meeting,
+    briefPath,
+    brief,
+  };
 }
 
 function splitSubtaskHeavyFields(subtask = {}) {
@@ -404,8 +453,71 @@ const plugin = {
   register(api) {
     api.logger.info?.('[openclaw-multi-agent] plugin registered');
 
+    api.registerTool?.({
+      name: 'multi_agent_runtime_status',
+      label: 'Multi-Agent Runtime Status',
+      description: 'Inspect the current multi-agent routing, execution snapshot, and artifact refs without relying on prompt injection.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' }
+        },
+        required: []
+      },
+      execute: async (args = {}) => {
+        const status = getCurrentRuntimeStatus(args.task_id || null);
+        const text = [
+          `multi-agent task: ${status.taskId || 'none'}`,
+          `decision: ${status.decision?.decision || 'none'}`,
+          `needsMultiAgent: ${String(Boolean(status.decision?.needsMultiAgent))}`,
+          `artifactRefs: ${Array.isArray(status.routing?.artifactRefs) ? status.routing.artifactRefs.length : 0}`,
+          `workers: ${Array.isArray(status.execution?.subtasks) ? status.execution.subtasks.length : 0}`,
+        ].join('\n');
+        return {
+          content: [{ type: 'text', text }],
+          details: { success: true, status }
+        };
+      }
+    });
+
+    api.registerTool?.({
+      name: 'multi_agent_task_brief',
+      label: 'Multi-Agent Task Brief',
+      description: 'Read the structured task brief generated at intake time for the current or specified multi-agent task.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' }
+        },
+        required: []
+      },
+      execute: async (args = {}) => {
+        const status = getCurrentRuntimeStatus(args.task_id || null);
+        if (!status.brief) {
+          return {
+            content: [{ type: 'text', text: 'No task brief available.' }],
+            details: { success: false, reason: 'missing_task_brief', taskId: status.taskId || null }
+          };
+        }
+        const text = [
+          `task brief: ${status.brief.taskId || status.taskId || 'unknown'}`,
+          `task: ${status.brief.task || 'unknown'}`,
+          `executionMode: ${status.brief.executionMode || 'unknown'}`,
+          `collaborationModel: ${status.brief.collaborationModel || 'unknown'}`,
+          `selectedRoles: ${Array.isArray(status.brief.selectedRoles) ? status.brief.selectedRoles.length : 0}`,
+          `teams: ${Array.isArray(status.brief.teams) ? status.brief.teams.length : 0}`,
+          `briefPath: ${status.briefPath || 'n/a'}`
+        ].join('\n');
+        return {
+          content: [{ type: 'text', text }],
+          details: { success: true, brief: status.brief, briefPath: status.briefPath }
+        };
+      }
+    });
+
     api.on('before_prompt_build', async (event, ctx) => {
       if (isInternalControlEvent(event, ctx)) return;
+      if (api.pluginConfig?.injectBeforePromptBuild === false) return;
       const prompt = sanitizePrompt(getPromptText(event));
       if (shouldSkip(prompt)) return;
       const agentId = resolveEventAgentId(event, ctx);
@@ -492,5 +604,6 @@ module.exports = plugin;
 module.exports.default = plugin;
 module.exports.hydratePlanFromArtifacts = hydratePlanFromArtifacts;
 module.exports.externalizePlanHeavyEvidence = externalizePlanHeavyEvidence;
+module.exports.getCurrentRuntimeStatus = getCurrentRuntimeStatus;
 module.exports.__testSanitizePrompt = sanitizePrompt;
 module.exports.__testShouldSkip = shouldSkip;

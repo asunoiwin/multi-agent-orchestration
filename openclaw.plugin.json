@@ -18,6 +18,10 @@
         "type": "boolean",
         "default": true
       },
+      "injectBeforePromptBuild": {
+        "type": "boolean",
+        "default": true
+      },
       "runtimeDir": {
         "type": "string"
       }
