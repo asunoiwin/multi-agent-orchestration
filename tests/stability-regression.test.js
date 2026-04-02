@@ -6,6 +6,7 @@ const path = require('path');
 const resultRecovery = require('../result-recovery.js');
 const supervisorRunner = require('../supervisor-runner.js');
 const watchdog = require('../orchestration-watchdog.js');
+const cleanupRuntimeModule = require('../cleanup-runtime.js');
 const { planTask } = require('../dynamic-orchestrator.js');
 const { shouldUseMeeting } = require('../modules/deliberation-engine.js');
 const { getRoleProfile, getResourceBudget } = require('../modules/reputation-engine.js');
@@ -197,6 +198,33 @@ function testExpandedPlatformCoverage() {
   assert.ok(String(plan.skillPath || '').includes('social-commerce-intel'), 'social-commerce skill path should be present');
 }
 
+function testInternalControlPayloadIsSanitizedAndSkipped() {
+  const prompt = `Multi-agent routing decision:
+- taskId: route-old
+- decision: light_multi
+
+Execution brief:
+- 任务类型：skill_discovery
+
+Search orchestration guidance:
+- 当前任务涉及外部信息时，先使用 websearch_pro_research 建立证据集，再回答。
+
+Sender (untrusted metadata):
+\`\`\`json
+{"label":"openclaw-control-ui","id":"openclaw-control-ui"}
+\`\`\`
+
+真正用户问题：这一段话是从哪里发出的`;
+
+  const sanitized = require('../src/index.js').__testSanitizePrompt
+    ? require('../src/index.js').__testSanitizePrompt(prompt)
+    : null;
+  if (sanitized) {
+    assert.ok(!/Multi-agent routing decision:|Execution brief:|Search orchestration guidance:/.test(sanitized), 'sanitized prompt should not keep internal control blocks');
+  }
+  assert.strictEqual(require('../src/index.js').__testShouldSkip(prompt), true, 'internal control payload should be skipped');
+}
+
 function testSessionSpawnIncludesThreadFlag() {
   const mappingFile = path.join(__dirname, '..', 'config', 'agent-mapping.json');
   const originalMapping = fs.readFileSync(mappingFile, 'utf8');
@@ -276,6 +304,37 @@ function testRecoveredResultsUseArtifactReferences() {
   assert.strictEqual(artifact.normalized.handoff.nextOwner, 'reviewer', 'artifact should preserve handoff payload');
 } 
 
+function testCleanupRuntimePrunesUnreferencedRecoveredArtifacts() {
+  const tempRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'openclaw-cleanup-'));
+  process.env.OPENCLAW_MULTI_AGENT_ROOT = tempRoot;
+  try {
+    const runtimeDir = path.join(tempRoot, 'runtime');
+    const recoveredDir = path.join(runtimeDir, 'recovered-results', 'task-cleanup');
+    fs.mkdirSync(recoveredDir, { recursive: true });
+    const kept = path.join(recoveredDir, 'kept.json');
+    const stale = path.join(recoveredDir, 'stale.json');
+    fs.writeFileSync(kept, JSON.stringify({ kept: true }));
+    fs.writeFileSync(stale, JSON.stringify({ stale: true }));
+    const old = new Date(Date.now() - (9 * 24 * 60 * 60 * 1000));
+    fs.utimesSync(stale, old, old);
+    fs.writeFileSync(path.join(runtimeDir, 'active-agents.json'), JSON.stringify([
+      {
+        taskId: 'task-cleanup',
+        result: {
+          evidenceRef: { path: kept }
+        }
+      }
+    ], null, 2));
+    fs.mkdirSync(path.join(tempRoot, 'tasks'), { recursive: true });
+    const result = cleanupRuntimeModule.cleanupRuntime({ recoveredResultsGraceMinutes: 7 * 24 * 60 });
+    assert.ok(fs.existsSync(kept), 'referenced recovered artifact should be kept');
+    assert.ok(!fs.existsSync(stale), 'unreferenced stale recovered artifact should be removed');
+    assert.strictEqual(result.recoveredResults.removedCount, 1);
+  } finally {
+    delete process.env.OPENCLAW_MULTI_AGENT_ROOT;
+  }
+}
+
 function run() {
   testMultiStrategyParse();
   testHandleTruncatedOutput();
@@ -287,10 +346,12 @@ function run() {
   testReputationBudget();
   testPromptContainsMeetingAndBudget();
   testSocialIntelRouting();
-  testPlannerAssignsSocialIntelRole();
-  testExpandedPlatformCoverage();
-  testSessionSpawnIncludesThreadFlag();
+testPlannerAssignsSocialIntelRole();
+testExpandedPlatformCoverage();
+testInternalControlPayloadIsSanitizedAndSkipped();
+testSessionSpawnIncludesThreadFlag();
   testRecoveredResultsUseArtifactReferences();
+  testCleanupRuntimePrunesUnreferencedRecoveredArtifacts();
   console.log('stability regression tests passed');
 }
 
