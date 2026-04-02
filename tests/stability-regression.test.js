@@ -8,6 +8,7 @@ const supervisorRunner = require('../supervisor-runner.js');
 const watchdog = require('../orchestration-watchdog.js');
 const cleanupRuntimeModule = require('../cleanup-runtime.js');
 const { planTask } = require('../dynamic-orchestrator.js');
+const taskIntake = require('../task-intake.js');
 const { shouldUseMeeting } = require('../modules/deliberation-engine.js');
 const { getRoleProfile, getResourceBudget } = require('../modules/reputation-engine.js');
 const { buildIntelligencePlan, hasSocialIntent } = require('../modules/social-intel-engine.js');
@@ -262,6 +263,13 @@ function testSessionSpawnIncludesThreadFlag() {
   }
 }
 
+function testTaskIntakeRejectsInternalControlPayload() {
+  const controlTask = `System: [2026-04-02 16:04:28 GMT+8] Gateway restart restart ok (gateway.restart)
+Read HEARTBEAT.md if it exists`;
+  assert.strictEqual(taskIntake.isInternalControlTask(controlTask, {}), true, 'control payload should be classified as internal');
+  assert.strictEqual(taskIntake.enqueue(controlTask, 'manual', {}), null, 'control payload should not create a task');
+}
+
 function testRecoveredResultsUseArtifactReferences() {
   const longSummary = `任务总结\n${'A'.repeat(2200)}`;
   const agent = {
@@ -350,6 +358,7 @@ testPlannerAssignsSocialIntelRole();
 testExpandedPlatformCoverage();
 testInternalControlPayloadIsSanitizedAndSkipped();
 testSessionSpawnIncludesThreadFlag();
+testTaskIntakeRejectsInternalControlPayload();
   testRecoveredResultsUseArtifactReferences();
   testCleanupRuntimePrunesUnreferencedRecoveredArtifacts();
   console.log('stability regression tests passed');

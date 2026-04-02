@@ -26,6 +26,13 @@ async function orchestrate(taskText, options = {}) {
   
   log('\n=== Step 1: Task Intake ===');
   const intake = enqueue(taskText, options.source || 'manual', options.context || {});
+  if (!intake) {
+    return {
+      skipped: true,
+      mode: 'internal',
+      message: 'Internal control payload skipped by task intake'
+    };
+  }
   log(`Task ID: ${intake.id}`);
   log(`Needs Multi-Agent: ${intake.payload.plan.needsMultiAgent}`);
   

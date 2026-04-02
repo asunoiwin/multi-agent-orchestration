@@ -32,6 +32,34 @@ function getPromptText(event) {
   return String(event?.prompt || '').trim();
 }
 
+function isInternalControlEvent(event, ctx) {
+  const prompt = String(event?.prompt || '');
+  const sessionKey = String(event?.sessionKey || ctx?.sessionKey || event?.session || '');
+  const sender = String(
+    event?.sender ||
+    event?.source ||
+    event?.context?.source ||
+    ctx?.sender ||
+    ctx?.source ||
+    ''
+  );
+  const controlPattern = [
+    /^System:/im,
+    /^HEARTBEAT(?:_OK)?$/im,
+    /Read HEARTBEAT\.md if it exists/im,
+    /When reading HEARTBEAT\.md/im,
+    /Current time:/im,
+    /gateway\.restart/im,
+    /openclaw doctor --non-interactive/im,
+    /openclaw-control-ui/im,
+    /before_agent_start/im,
+    /^\[cron:[^\]]+\]/im,
+  ];
+  if (controlPattern.some((pattern) => pattern.test(prompt))) return true;
+  if (/:cron:/.test(sessionKey) || /openclaw-control-ui/i.test(sender)) return true;
+  return false;
+}
+
 function resolveEventAgentId(event, ctx) {
   const direct = String(event?.agentId || ctx?.agentId || '').trim();
   if (direct) return direct;
@@ -377,6 +405,7 @@ const plugin = {
     api.logger.info?.('[openclaw-multi-agent] plugin registered');
 
     api.on('before_prompt_build', async (event, ctx) => {
+      if (isInternalControlEvent(event, ctx)) return;
       const prompt = sanitizePrompt(getPromptText(event));
       if (shouldSkip(prompt)) return;
       const agentId = resolveEventAgentId(event, ctx);

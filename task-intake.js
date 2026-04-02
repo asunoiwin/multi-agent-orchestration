@@ -65,6 +65,36 @@ function ensureDirs() {
   });
 }
 
+function isInternalControlTask(taskText = '', context = {}) {
+  const text = String(taskText || '').trim();
+  if (!text) return true;
+  const sender = String(
+    context.sender ||
+    context.source ||
+    context.requestedBy ||
+    context.sessionKey ||
+    ''
+  );
+  const controlPattern = [
+    /^System:/im,
+    /^HEARTBEAT(?:_OK)?$/im,
+    /Read HEARTBEAT\.md if it exists/im,
+    /When reading HEARTBEAT\.md/im,
+    /Current time:/im,
+    /gateway\.restart/im,
+    /openclaw doctor --non-interactive/im,
+    /openclaw-control-ui/im,
+    /before_agent_start/im,
+    /^Multi-agent routing decision:/im,
+    /^Execution brief:/im,
+    /^Search orchestration guidance:/im,
+    /^\[cron:[^\]]+\]/im,
+  ];
+  if (controlPattern.some((pattern) => pattern.test(text))) return true;
+  if (/:cron:/.test(sender) || /openclaw-control-ui/i.test(sender)) return true;
+  return false;
+}
+
 function taskId() {
   return `task-${Date.now()}`;
 }
@@ -175,9 +205,12 @@ function writeTaskBrief(payload) {
 
 function enqueue(taskText, source = 'manual', context = {}) {
   ensureDirs();
+  const normalizedContext = normalizeContext(context, source);
+  if (isInternalControlTask(taskText, normalizedContext)) {
+    return null;
+  }
   const id = taskId();
   const plan = planTask(taskText);
-  const normalizedContext = normalizeContext(context, source);
   normalizedContext.taskRoot = inferTaskRoot(taskText, normalizedContext);
   const payload = {
     id,
@@ -210,4 +243,4 @@ if (require.main === module) {
   console.log(JSON.stringify({ id: result.id, file: result.file, briefPath: result.briefPath, plan: result.payload.plan }, null, 2));
 }
 
-module.exports = { enqueue, collectKeyPaths, createTaskBriefPayload, writeTaskBrief };
+module.exports = { enqueue, collectKeyPaths, createTaskBriefPayload, writeTaskBrief, isInternalControlTask };
