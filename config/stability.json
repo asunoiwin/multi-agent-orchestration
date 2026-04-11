@@ -37,6 +37,12 @@
     "zombieTimeoutMs": 300000,
     "maxRunningTimeMs": 3600000
   },
+  "agent": {
+    "runTimeoutMs": 600000,
+    "runTimeoutSeconds": 600,
+    "spawnTimeoutMs": 30000,
+    "initTimeoutMs": 60000
+  },
   "dependencyCycle": {
     "detectEnabled": true,
     "autoBreak": true

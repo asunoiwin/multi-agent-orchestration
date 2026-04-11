@@ -8,8 +8,13 @@ const { buildIntelligencePlan, hasSocialIntent } = require('./modules/social-int
 const ROOT = __dirname;
 const POOL_FILE = path.join(ROOT, 'config', 'agent-pool.json');
 
-function readJson(file) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+function readJson(file, fallback = null) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    console.warn(`[dynamic-orchestrator] Failed to read ${file}: ${e.message}`);
+    return fallback;
+  }
 }
 
 function detectFeatures(task) {
@@ -46,6 +51,81 @@ function complexityScore(task, features) {
   if (features.parallel) score += 2;
   if (features.serial) score += 2;
   return score;
+}
+
+/**
+ * Detect cycles in the dependency graph using DFS.
+ * Returns an array of cycles (each cycle is an array of workerIds).
+ */
+function detectDependencyCycles(subtasks) {
+  const graph = new Map();
+  for (const task of subtasks) {
+    graph.set(task.workerId, task.dependsOn || []);
+  }
+
+  const visited = new Set();
+  const recStack = new Set();
+  const cycles = [];
+
+  function dfs(nodeId, path) {
+    if (!graph.has(nodeId)) return false;
+    visited.add(nodeId);
+    recStack.add(nodeId);
+    path.push(nodeId);
+
+    for (const depId of graph.get(nodeId)) {
+      if (!visited.has(depId)) {
+        if (dfs(depId, [...path])) {
+          return true;
+        }
+      } else if (recStack.has(depId)) {
+        // Found a cycle - extract the cycle from the path
+        const cycleStart = path.indexOf(depId);
+        if (cycleStart !== -1) {
+          cycles.push(path.slice(cycleStart));
+        } else {
+          cycles.push([...path, depId]);
+        }
+        return true;
+      }
+    }
+
+    recStack.delete(nodeId);
+    return false;
+  }
+
+  for (const task of subtasks) {
+    if (!visited.has(task.workerId)) {
+      dfs(task.workerId, []);
+    }
+  }
+
+  return cycles;
+}
+
+/**
+ * Break cycles by removing the weakest dependency in each cycle.
+ * Returns modified subtasks with broken dependencies.
+ */
+function breakCycles(subtasks, cycles) {
+  if (!cycles || cycles.length === 0) return subtasks;
+
+  const modified = subtasks.map(t => ({ ...t, dependsOn: [...(t.dependsOn || [])] }));
+
+  for (const cycle of cycles) {
+    console.warn(`[dynamic-orchestrator] Detected dependency cycle: ${cycle.join(' -> ')}`);
+    // Remove the last dependency in the cycle (typically the handoff/backlink)
+    if (cycle.length > 1) {
+      const lastInCycle = cycle[cycle.length - 1];
+      const taskToModify = modified.find(t => t.workerId === lastInCycle);
+      if (taskToModify && taskToModify.dependsOn.length > 0) {
+        const removedDep = taskToModify.dependsOn.pop();
+        console.warn(`[dynamic-orchestrator] Breaking cycle by removing dependency: ${lastInCycle} -> ${removedDep}`);
+      }
+    }
+  }
+
+  return modified;
 }
 
 function hasKeyword(task, pattern) {
@@ -356,6 +436,23 @@ function buildSubtasks(task, assignments, executionMode) {
   });
 }
 
+/**
+ * Build subtasks with cycle detection.
+ * This wrapper adds dependency cycle detection and automatic cycle breaking.
+ */
+function buildSubtasksWithCycleDetection(task, assignments, executionMode) {
+  const subtasks = buildSubtasks(task, assignments, executionMode);
+
+  // Detect cycles before any modifications
+  const cycles = detectDependencyCycles(subtasks);
+  if (cycles.length > 0) {
+    console.warn(`[dynamic-orchestrator] ${cycles.length} dependency cycle(s) detected, breaking automatically`);
+    return breakCycles(subtasks, cycles);
+  }
+
+  return subtasks;
+}
+
 function buildSyncPlan(teams, executionMode) {
   const syncPoints = [];
   const discovery = teams.filter(team => team.stage === 'discovery');
@@ -423,7 +520,7 @@ function planTask(task) {
   const mode = chooseMode(features, capabilityNeeds);
   const teams = buildTeams(assignments);
   const enrichedAssignments = attachCollaborationMetadata(assignments, teams);
-  const subtasks = buildSubtasks(task, enrichedAssignments, mode);
+  const subtasks = buildSubtasksWithCycleDetection(task, enrichedAssignments, mode);
   const syncPlan = buildSyncPlan(teams, mode);
   const analysisLike = {
     score,

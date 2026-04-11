@@ -402,6 +402,60 @@ function testTaskIntakeWritesTranscriptEvent() {
   try { fs.unlinkSync(transcript.file); } catch {}
 }
 
+async function testTranscriptLifecycleAuditEvents() {
+  const tempRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'openclaw-transcript-audit-'));
+  process.env.OPENCLAW_MULTI_AGENT_ROOT = tempRoot;
+  try {
+    const pluginPath = require.resolve('../src/index.js');
+    delete require.cache[pluginPath];
+    const plugin = require('../src/index.js');
+    const tools = new Map();
+    const handlers = {};
+
+    plugin.register({
+      logger: { info() {}, error() {} },
+      pluginConfig: { mainAgentOnly: true },
+      registerTool(tool) { tools.set(tool.name, tool); },
+      on(name, handler) { handlers[name] = handler; },
+    });
+
+    await handlers.before_prompt_build({
+      prompt: '请做架构分析并比较方案，然后安排多角色执行与审查',
+      sessionKey: 'agent:main:main',
+      agentId: 'main',
+      modelId: 'minimax/MiniMax-M2.7-highspeed',
+    }, {});
+
+    const statusTool = tools.get('multi_agent_runtime_status');
+    const briefTool = tools.get('multi_agent_task_brief');
+    const transcriptTool = tools.get('multi_agent_task_transcript');
+    const graphTool = tools.get('multi_agent_execution_graph');
+
+    const statusResult = await statusTool.execute({});
+    const taskId = statusResult.details.status.taskId;
+    assert.ok(taskId, 'runtime status should expose taskId');
+
+    await briefTool.execute({ task_id: taskId });
+    await transcriptTool.execute({ task_id: taskId, limit: 50 });
+    const graphResult = await graphTool.execute({ task_id: taskId });
+    assert.equal(graphResult.details.success, true, 'execution graph tool should succeed');
+    assert.equal(graphResult.details.graph.taskId, taskId);
+    assert.ok(Array.isArray(graphResult.details.graph.nodes) && graphResult.details.graph.nodes.length >= 5, 'execution graph should include nodes');
+    assert.ok(Array.isArray(graphResult.details.graph.edges) && graphResult.details.graph.edges.length >= 4, 'execution graph should include edges');
+
+    const transcript = transcriptStore.readTranscript(taskId, 200);
+    const kinds = transcript.entries.map((entry) => entry.kind);
+    assert.ok(kinds.includes('execution_snapshot_generated'), 'execution snapshot event should be recorded');
+    assert.ok(kinds.includes('meeting_artifact_generated'), 'meeting artifact event should be recorded');
+    assert.ok(kinds.includes('runtime_status_read'), 'runtime status read event should be recorded');
+    assert.ok(kinds.includes('task_brief_read'), 'task brief read event should be recorded');
+    assert.ok(kinds.includes('task_transcript_read'), 'task transcript read event should be recorded');
+    assert.ok(kinds.includes('execution_graph_read'), 'execution graph read event should be recorded');
+  } finally {
+    delete process.env.OPENCLAW_MULTI_AGENT_ROOT;
+  }
+}
+
 function testCleanupRuntimePrunesUnreferencedRecoveredArtifacts() {
   const tempRoot = fs.mkdtempSync(path.join(require('os').tmpdir(), 'openclaw-cleanup-'));
   process.env.OPENCLAW_MULTI_AGENT_ROOT = tempRoot;
@@ -433,7 +487,7 @@ function testCleanupRuntimePrunesUnreferencedRecoveredArtifacts() {
   }
 }
 
-function run() {
+async function run() {
   testMultiStrategyParse();
   testHandleTruncatedOutput();
   testDeterministicAdvanceNoCrash();
@@ -453,8 +507,12 @@ testTaskIntakeRejectsInternalControlPayload();
   testRuntimeStatusReadsLatestTaskBrief();
   testRecoveredResultsUseArtifactReferences();
   testTaskIntakeWritesTranscriptEvent();
+  await testTranscriptLifecycleAuditEvents();
   testCleanupRuntimePrunesUnreferencedRecoveredArtifacts();
   console.log('stability regression tests passed');
 }
 
-run();
+run().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

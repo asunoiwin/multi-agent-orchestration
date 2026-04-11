@@ -13,10 +13,12 @@ const executionPath = path.join(runtimeDir, 'multi-agent-execution.json');
 const meetingPath = path.join(runtimeDir, 'multi-agent-meeting.json');
 const routingArtifactsDir = path.join(runtimeDir, 'routing-artifacts');
 const taskBriefDir = path.join(pluginRoot, 'runtime', 'task-briefs');
+const supervisorRunnerPath = path.join(pluginRoot, 'supervisor-runner.js');
 const transcriptStore = require('../transcript-store');
 
 let analyzeTask = null;
 let planTask = null;
+let supervisorRunOnce = null;
 
 try {
   ({ analyzeTask } = require(analyzerPath));
@@ -28,6 +30,12 @@ try {
   ({ planTask } = require(plannerPath));
 } catch {
   planTask = null;
+}
+
+try {
+  ({ supervisorRunOnce } = require(supervisorRunnerPath));
+} catch {
+  supervisorRunOnce = null;
 }
 
 function getPromptText(event) {
@@ -204,17 +212,38 @@ function getCurrentRuntimeStatus(taskId = null) {
   const execution = readJson(executionPath, null);
   const meeting = readJson(meetingPath, null);
   const effectiveTaskId = taskId || routing?.taskId || decision?.taskId || execution?.taskId || null;
+
+  // Stale task guard: if no specific taskId requested and the current task is
+  // >1 hour old with no active agents / queued workers, treat it as stale so that
+  // ops-watchdog stops polling it.
+  const STALE_THRESHOLD_MS = 60 * 60 * 1000;
+  let isStale = false;
+  if (!taskId && effectiveTaskId && execution?.generated_at && execution?.taskId === effectiveTaskId) {
+    const ageMs = Date.now() - new Date(execution.generated_at).getTime();
+    const pluginRoot = path.resolve(__dirname, '..');
+    const manifest = readJson(path.join(pluginRoot, 'runtime', 'spawn-queue-manifest.json'), { agents: [] });
+    const activeAgents = readJson(path.join(pluginRoot, 'runtime', 'active-agents.json'), []);
+    const hasActiveWork =
+      (Array.isArray(manifest?.agents) && manifest.agents.length > 0) ||
+      (Array.isArray(activeAgents) && activeAgents.some((a) => a?.taskId && ['waiting', 'spawning', 'running', 'in_progress'].includes(a.status)));
+    if (ageMs > STALE_THRESHOLD_MS && !hasActiveWork) {
+      isStale = true;
+    }
+  }
+
   const briefPath = getTaskBriefPath(effectiveTaskId) || getLatestTaskBriefPath();
   const brief = briefPath ? readJson(briefPath, null) : null;
   return {
-    taskId: effectiveTaskId || brief?.taskId || null,
-    decision,
-    routing,
-    execution,
-    meeting,
-    transcript: effectiveTaskId ? transcriptStore.summarizeTranscript(effectiveTaskId) : null,
-    briefPath,
-    brief,
+    taskId: isStale ? null : (effectiveTaskId || brief?.taskId || null),
+    decision: isStale ? null : decision,
+    routing: isStale ? null : routing,
+    execution: isStale ? null : execution,
+    meeting: isStale ? null : meeting,
+    transcript: effectiveTaskId && !isStale ? transcriptStore.summarizeTranscript(effectiveTaskId) : null,
+    briefPath: isStale ? null : briefPath,
+    brief: isStale ? null : brief,
+    isStale,
+    staleTaskId: isStale ? effectiveTaskId : null,
   };
 }
 
@@ -468,6 +497,16 @@ const plugin = {
       },
       execute: async (args = {}) => {
         const status = getCurrentRuntimeStatus(args.task_id || null);
+        if (status.taskId && !status.isStale) {
+          transcriptStore.appendTranscriptEvent(status.taskId, 'runtime_status_read', {
+            requestedTaskId: args.task_id || null,
+            effectiveTaskId: status.taskId,
+            hasDecision: Boolean(status.decision),
+            hasRouting: Boolean(status.routing),
+            hasExecution: Boolean(status.execution),
+            hasBrief: Boolean(status.brief)
+          });
+        }
         const text = [
           `multi-agent task: ${status.taskId || 'none'}`,
           `decision: ${status.decision?.decision || 'none'}`,
@@ -495,6 +534,14 @@ const plugin = {
       },
       execute: async (args = {}) => {
         const status = getCurrentRuntimeStatus(args.task_id || null);
+        if (status.taskId && !status.isStale) {
+          transcriptStore.appendTranscriptEvent(status.taskId, 'task_brief_read', {
+            requestedTaskId: args.task_id || null,
+            effectiveTaskId: status.taskId,
+            briefPath: status.briefPath || null,
+            success: Boolean(status.brief)
+          });
+        }
         if (!status.brief) {
           return {
             content: [{ type: 'text', text: 'No task brief available.' }],
@@ -540,6 +587,15 @@ const plugin = {
         }
         const transcript = transcriptStore.readTranscript(taskId, Number(args.limit || 20));
         const latest = transcript.entries[transcript.entries.length - 1] || null;
+        // Don't append transcript event for stale tasks (avoids phantom task keep-alive)
+        if (!status.isStale) {
+          transcriptStore.appendTranscriptEvent(taskId, 'task_transcript_read', {
+            requestedTaskId: args.task_id || null,
+            effectiveTaskId: taskId,
+            limit: Number(args.limit || 20),
+            returnedEntries: transcript.entries.length
+          });
+        }
         const text = [
           `task transcript: ${taskId}`,
           `entries: ${transcript.entries.length}`,
@@ -551,6 +607,193 @@ const plugin = {
           content: [{ type: 'text', text }],
           details: { success: true, transcript }
         };
+      }
+    });
+
+    api.registerTool?.({
+      name: 'multi_agent_execution_graph',
+      label: 'Multi-Agent Execution Graph',
+      description: 'Read a structured execution graph view that joins routing, execution, meeting, brief, and transcript state for the current or specified task.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string' }
+        },
+        required: []
+      },
+      execute: async (args = {}) => {
+        const status = getCurrentRuntimeStatus(args.task_id || null);
+        const taskId = args.task_id || status.taskId || null;
+        if (!taskId) {
+          return {
+            content: [{ type: 'text', text: 'No execution graph available.' }],
+            details: { success: false, reason: 'missing_task_id' }
+          };
+        }
+        const graph = {
+          taskId,
+          decision: {
+            score: Number(status.decision?.score ?? 0),
+            needsMultiAgent: Boolean(status.decision?.needsMultiAgent),
+            decision: status.decision?.decision || null,
+            categories: status.decision?.categories || []
+          },
+          routing: {
+            request: status.routing?.request || null,
+            artifactRefs: Array.isArray(status.routing?.artifactRefs) ? status.routing.artifactRefs : [],
+            externalized: Boolean(status.routing?.externalized)
+          },
+          execution: {
+            executionMode: status.execution?.executionMode || null,
+            collaborationModel: status.execution?.collaborationModel || null,
+            subtasks: Array.isArray(status.execution?.subtasks) ? status.execution.subtasks.map((subtask) => ({
+              workerId: subtask.workerId || null,
+              roleId: subtask.roleId || null,
+              stage: subtask.stage || null,
+              capability: subtask.capability || null,
+              dependsOn: Array.isArray(subtask.dependsOn) ? subtask.dependsOn : []
+            })) : []
+          },
+          meeting: {
+            enabled: Boolean(status.meeting?.meetingPlan?.enabled),
+            mode: status.meeting?.meetingPlan?.mode || null,
+            rounds: Number(status.meeting?.meetingPlan?.rounds || 0),
+            participants: Array.isArray(status.meeting?.meetingPlan?.participants) ? status.meeting.meetingPlan.participants : []
+          },
+          brief: status.brief ? {
+            path: status.briefPath || null,
+            task: status.brief.task || null,
+            executionMode: status.brief.executionMode || null,
+            collaborationModel: status.brief.collaborationModel || null
+          } : null,
+          transcript: status.transcript || null,
+          files: {
+            routingPath,
+            executionPath,
+            meetingPath,
+            briefPath: status.briefPath || null
+          }
+        };
+        graph.nodes = [
+          { id: `task:${taskId}`, kind: 'task', label: taskId },
+          { id: `decision:${taskId}`, kind: 'decision', label: graph.decision.decision || 'unknown' },
+          { id: `routing:${taskId}`, kind: 'routing', label: graph.routing.request ? 'routing' : 'routing-missing' },
+          { id: `execution:${taskId}`, kind: 'execution', label: graph.execution.executionMode || 'unknown' },
+          { id: `meeting:${taskId}`, kind: 'meeting', label: graph.meeting.enabled ? (graph.meeting.mode || 'meeting') : 'disabled' },
+        ];
+        if (graph.brief) {
+          graph.nodes.push({ id: `brief:${taskId}`, kind: 'brief', label: graph.brief.executionMode || 'brief' });
+        }
+        for (const ref of graph.routing.artifactRefs) {
+          graph.nodes.push({
+            id: `artifact:${ref.id || ref.path || randomId()}`,
+            kind: 'artifact',
+            label: ref.kind || 'artifact',
+            path: ref.path || null
+          });
+        }
+        for (const subtask of graph.execution.subtasks) {
+          graph.nodes.push({
+            id: `worker:${subtask.workerId || subtask.roleId || randomId()}`,
+            kind: 'worker',
+            label: subtask.roleId || subtask.workerId || 'worker',
+            stage: subtask.stage || null,
+            capability: subtask.capability || null
+          });
+        }
+        graph.edges = [
+          { from: `task:${taskId}`, to: `decision:${taskId}`, kind: 'decides' },
+          { from: `task:${taskId}`, to: `routing:${taskId}`, kind: 'routes' },
+          { from: `routing:${taskId}`, to: `execution:${taskId}`, kind: 'materializes' },
+          { from: `task:${taskId}`, to: `meeting:${taskId}`, kind: 'coordinates' },
+        ];
+        if (graph.brief) {
+          graph.edges.push({ from: `task:${taskId}`, to: `brief:${taskId}`, kind: 'briefs' });
+        }
+        for (const ref of graph.routing.artifactRefs) {
+          graph.edges.push({
+            from: `routing:${taskId}`,
+            to: `artifact:${ref.id || ref.path || 'artifact'}`,
+            kind: 'references'
+          });
+        }
+        for (const subtask of graph.execution.subtasks) {
+          const workerNodeId = `worker:${subtask.workerId || subtask.roleId || 'worker'}`;
+          graph.edges.push({
+            from: `execution:${taskId}`,
+            to: workerNodeId,
+            kind: 'spawns'
+          });
+          for (const dep of subtask.dependsOn) {
+            graph.edges.push({
+              from: `worker:${dep}`,
+              to: workerNodeId,
+              kind: 'depends_on'
+            });
+          }
+        }
+        if (!status.isStale) {
+          transcriptStore.appendTranscriptEvent(taskId, 'execution_graph_read', {
+            requestedTaskId: args.task_id || null,
+            effectiveTaskId: taskId,
+            subtasks: graph.execution.subtasks.length,
+            artifactRefs: graph.routing.artifactRefs.length,
+            nodes: graph.nodes.length,
+            edges: graph.edges.length
+          });
+        }
+        const text = [
+          `taskId: ${taskId}`,
+          `needsMultiAgent: ${String(graph.decision.needsMultiAgent)}`,
+          `executionMode: ${graph.execution.executionMode || 'unknown'}`,
+          `subtasks: ${graph.execution.subtasks.length}`,
+          `artifactRefs: ${graph.routing.artifactRefs.length}`,
+          `meetingEnabled: ${String(graph.meeting.enabled)}`,
+          `nodes: ${graph.nodes.length}`,
+          `edges: ${graph.edges.length}`
+        ].join('\n');
+        return {
+          content: [{ type: 'text', text }],
+          details: { success: true, graph }
+        };
+      }
+    });
+
+    // P0 Fix: Add spawn trigger tool so main agent can trigger agent spawning
+    api.registerTool?.({
+      name: 'multi_agent_spawn',
+      label: 'Multi-Agent Spawn',
+      description: 'Trigger multi-agent spawning. Reads pending tasks from runtime and spawns agents via sessions_spawn. Call this when routing decision is multi.',
+      parameters: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: 'Optional specific task ID to spawn' }
+        },
+        required: []
+      },
+      execute: async (args = {}) => {
+        if (typeof supervisorRunOnce !== 'function') {
+          return { content: [{ type: 'text', text: 'Spawn unavailable: supervisorRunOnce not loaded' }], details: { success: false } };
+        }
+        try {
+          const result = supervisorRunOnce();
+          const spawned = result?.handled?.flatMap(h => h.spawned || []) || [];
+          return {
+            content: [{
+              type: 'text',
+              text: `Spawn trigger: ${spawned.length} agents spawned. pending=${result.pendingCount}, nextAction=${result.nextAction}`
+            }],
+            details: {
+              success: true,
+              spawnedCount: spawned.length,
+              pendingTasks: result.pendingCount,
+              nextAction: result.nextAction,
+              spawnDetails: spawned
+            }
+          };
+        } catch (err) {
+          return { content: [{ type: 'text', text: `Spawn trigger failed: ${err.message}` }], details: { success: false, error: err.message } };
+        }
       }
     });
 
@@ -631,7 +874,19 @@ const plugin = {
         );
 
         fs.writeFileSync(executionPath, JSON.stringify(snapshot, null, 2));
-        fs.writeFileSync(meetingPath, JSON.stringify(buildMeetingArtifact(taskId, prompt, analysis, planLite), null, 2));
+        transcriptStore.appendTranscriptEvent(taskId, 'execution_snapshot_generated', {
+          path: executionPath,
+          executionMode: snapshot?.executionMode || planLite?.executionMode || 'single',
+          subtasks: Array.isArray(snapshot?.subtasks) ? snapshot.subtasks.length : 0
+        });
+        const meetingArtifact = buildMeetingArtifact(taskId, prompt, analysis, planLite);
+        fs.writeFileSync(meetingPath, JSON.stringify(meetingArtifact, null, 2));
+        transcriptStore.appendTranscriptEvent(taskId, 'meeting_artifact_generated', {
+          path: meetingPath,
+          enabled: Boolean(meetingArtifact?.meetingPlan?.enabled),
+          participants: Array.isArray(meetingArtifact?.meetingPlan?.participants) ? meetingArtifact.meetingPlan.participants.length : 0,
+          rounds: Number(meetingArtifact?.meetingPlan?.rounds || 0)
+        });
         transcriptStore.appendTranscriptEvent(taskId, 'routing_context_generated', {
           executionMode: planLite?.executionMode || 'single',
           collaborationModel: planLite?.collaborationModel || 'solo',

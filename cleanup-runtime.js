@@ -2,19 +2,44 @@
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = __dirname;
-const TASKS_DIR = path.join(ROOT, 'tasks');
-const TASK_ARCHIVE_DIR = path.join(TASKS_DIR, 'archive');
-const RUNTIME_DIR = path.join(ROOT, 'runtime');
-const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
-const ACTIVE_ARCHIVE_DIR = path.join(RUNTIME_DIR, 'archive');
-const ACTIVE_LOCK = ACTIVE_FILE + '.lock';
+function getPaths() {
+  const root = process.env.OPENCLAW_MULTI_AGENT_ROOT || __dirname;
+  const tasksDir = path.join(root, 'tasks');
+  const runtimeDir = path.join(root, 'runtime');
+  const activeFile = path.join(runtimeDir, 'active-agents.json');
+  return {
+    ROOT: root,
+    TASKS_DIR: tasksDir,
+    TASK_ARCHIVE_DIR: path.join(tasksDir, 'archive'),
+    RUNTIME_DIR: runtimeDir,
+    RECOVERED_RESULTS_DIR: path.join(runtimeDir, 'recovered-results'),
+    ACTIVE_FILE: activeFile,
+    ACTIVE_ARCHIVE_DIR: path.join(runtimeDir, 'archive'),
+    ACTIVE_LOCK: `${activeFile}.lock`
+  };
+}
 
 // P0 Fix: file locking to prevent concurrent write races
+function sleepMsAsync(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function acquireLockAsync(lockFile, maxWaitMs = 5000) {
+  const start = Date.now();
+  while (fs.existsSync(lockFile)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error(`Failed to acquire lock on ${lockFile} after ${maxWaitMs}ms`);
+    }
+    try { fs.utimesSync(lockFile, new Date(), new Date()); } catch {}
+    await sleepMsAsync(25);
+  }
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8');
+}
+
 function sleepMs(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    // Busy wait for tiny lock backoff windows.
+    // OS-level sleep via busy-wait; other threads can run
   }
 }
 
@@ -35,6 +60,7 @@ function releaseLock(lockFile) {
 }
 
 function writeActiveAgentsSafe(data) {
+  const { ACTIVE_FILE, ACTIVE_LOCK } = getPaths();
   acquireLock(ACTIVE_LOCK);
   try {
     writeJson(ACTIVE_FILE, data);
@@ -90,6 +116,7 @@ function isRecoverableProductionTask(task) {
 }
 
 function loadTaskFiles() {
+  const { TASKS_DIR } = getPaths();
   if (!fs.existsSync(TASKS_DIR)) return [];
   return fs.readdirSync(TASKS_DIR)
     .filter((file) => file.endsWith('.json'))
@@ -212,6 +239,7 @@ function shouldArchiveTask(task, agents, nowMs, options) {
 }
 
 function archiveTaskFile(task, reason, nowIso) {
+  const { TASK_ARCHIVE_DIR } = getPaths();
   fs.mkdirSync(TASK_ARCHIVE_DIR, { recursive: true });
   const archivedName = path.basename(task.file).replace(/\.json$/, `.${nowIso.replace(/[:.]/g, '-')}.json`);
   const dest = path.join(TASK_ARCHIVE_DIR, archivedName);
@@ -223,13 +251,68 @@ function archiveTaskFile(task, reason, nowIso) {
 }
 
 function archiveActiveAgents(agents, taskId, nowIso) {
+  const { ACTIVE_ARCHIVE_DIR } = getPaths();
   fs.mkdirSync(ACTIVE_ARCHIVE_DIR, { recursive: true });
   const dest = path.join(ACTIVE_ARCHIVE_DIR, `${taskId}.${nowIso.replace(/[:.]/g, '-')}.json`);
   writeJson(dest, agents);
   return dest;
 }
 
+function walkFiles(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const results = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...walkFiles(full));
+    } else if (entry.isFile()) {
+      results.push(full);
+    }
+  }
+  return results;
+}
+
+function collectReferencedRecoveredArtifacts(activeAgents) {
+  const referenced = new Set();
+  for (const agent of activeAgents || []) {
+    const refPath = agent?.result?.evidenceRef?.path;
+    if (typeof refPath === 'string' && refPath.trim()) {
+      referenced.add(path.resolve(refPath));
+    }
+  }
+  return referenced;
+}
+
+function cleanupRecoveredResults(activeAgents, nowMs, settings) {
+  const { RECOVERED_RESULTS_DIR } = getPaths();
+  const referenced = collectReferencedRecoveredArtifacts(activeAgents);
+  const files = walkFiles(RECOVERED_RESULTS_DIR);
+  const removedFiles = [];
+  for (const file of files) {
+    const resolved = path.resolve(file);
+    if (referenced.has(resolved)) continue;
+    let stat;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      continue;
+    }
+    const ageMin = Math.max(0, Math.floor((nowMs - stat.mtimeMs) / 60000));
+    if (ageMin < settings.recoveredResultsGraceMinutes) continue;
+    try {
+      fs.unlinkSync(file);
+      removedFiles.push({ file, ageMinutes: ageMin });
+    } catch {}
+  }
+  return {
+    referencedCount: referenced.size,
+    removedCount: removedFiles.length,
+    removedFiles
+  };
+}
+
 function cleanupRuntime(options = {}) {
+  const { ACTIVE_FILE } = getPaths();
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const settings = {
@@ -238,7 +321,8 @@ function cleanupRuntime(options = {}) {
     orphanAllocationMinutes: options.orphanAllocationMinutes ?? 10,
     validationStaleMinutes: options.validationStaleMinutes ?? 30,
     validationArchiveCompletedMinutes: options.validationArchiveCompletedMinutes ?? 15,
-    productionArchiveGraceMinutes: options.productionArchiveGraceMinutes ?? 240
+    productionArchiveGraceMinutes: options.productionArchiveGraceMinutes ?? 240,
+    recoveredResultsGraceMinutes: options.recoveredResultsGraceMinutes ?? (7 * 24 * 60)
   };
 
   const active = readJson(ACTIVE_FILE, []);
@@ -289,6 +373,8 @@ function cleanupRuntime(options = {}) {
     writeActiveAgentsSafe( keptAgents);
   }
 
+  const recoveredResults = cleanupRecoveredResults(keptAgents, nowMs, settings);
+
   return {
     cleanedAt: nowIso,
     staleMinutes: settings.staleMinutes,
@@ -297,8 +383,10 @@ function cleanupRuntime(options = {}) {
     validationStaleMinutes: settings.validationStaleMinutes,
     validationArchiveCompletedMinutes: settings.validationArchiveCompletedMinutes,
     productionArchiveGraceMinutes: settings.productionArchiveGraceMinutes,
+    recoveredResultsGraceMinutes: settings.recoveredResultsGraceMinutes,
     archivedTasks,
     orphanRuntimeAgents,
+    recoveredResults,
     prunedAgentCount: prunedAgents.length,
     remainingAgents: keptAgents.length
   };
@@ -308,4 +396,9 @@ if (require.main === module) {
   console.log(JSON.stringify(cleanupRuntime(), null, 2));
 }
 
-module.exports = { cleanupRuntime };
+module.exports = {
+  cleanupRuntime,
+  cleanupRecoveredResults,
+  collectReferencedRecoveredArtifacts,
+  getPaths
+};

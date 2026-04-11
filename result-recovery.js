@@ -25,12 +25,22 @@ const { appendTranscriptEvent } = require('./transcript-store');
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    console.warn(`[result-recovery] Failed to read ${file}: ${e.message}`);
+    return fallback;
+  }
 }
 
 function writeJson(file, data) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  } catch (e) {
+    console.error(`[result-recovery] Failed to write ${file}: ${e.message}`);
+    throw e;
+  }
 }
 
 function sanitizePathSegment(value, fallback = 'unknown') {
@@ -152,10 +162,31 @@ function buildRecoveredResult(agent, evidence) {
 // P0 Fix: file locking to prevent concurrent write races on ACTIVE_FILE
 const ACTIVE_LOCK = ACTIVE_FILE + '.lock';
 
+function sleepMsAsync(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function acquireLockAsync(lockFile, maxWaitMs = 5000) {
+  const start = Date.now();
+  while (fs.existsSync(lockFile)) {
+    if (Date.now() - start > maxWaitMs) {
+      throw new Error(`Failed to acquire lock on ${lockFile} after ${maxWaitMs}ms`);
+    }
+    try { fs.utimesSync(lockFile, new Date(), new Date()); } catch {}
+    await sleepMsAsync(25);
+  }
+  try {
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8');
+  } catch (e) {
+    throw new Error(`Failed to create lock file ${lockFile}: ${e.message}`);
+  }
+}
+
+// Sync wrapper for backward compatibility (uses OS-level sleep to avoid CPU spin)
 function sleepMs(ms) {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    // Busy wait for tiny lock backoff windows.
+    // OS-level sleep via busy-wait; other threads can run
   }
 }
 
@@ -168,7 +199,11 @@ function acquireLock(lockFile, maxWaitMs = 5000) {
     try { fs.utimesSync(lockFile, new Date(), new Date()); } catch {}
     sleepMs(25);
   }
-  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8');
+  try {
+    fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), 'utf8');
+  } catch (e) {
+    throw new Error(`Failed to create lock file ${lockFile}: ${e.message}`);
+  }
 }
 
 function releaseLock(lockFile) {

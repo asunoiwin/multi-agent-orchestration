@@ -80,7 +80,7 @@ async function main() {
 
     try {
       // 调用 sessions_spawn
-      const { spawnAgent } = require('./agent-manager');
+      const { spawnAgent } = require('./supervisor-runner');
       const agentSession = await spawnAgent({
         runtime: payload.runtime || 'subagent',
         agentId: payload.agentId || 'main',

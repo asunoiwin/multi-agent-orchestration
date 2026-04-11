@@ -11,13 +11,57 @@ const RUNTIME_DIR = path.join(ROOT, 'runtime');
 const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
 const STATE_FILE = path.join(RUNTIME_DIR, 'supervisor-state.json');
 const BRIEF_DIR = path.join(RUNTIME_DIR, 'task-briefs');
+const SPAWN_QUEUE_DIR = path.join(RUNTIME_DIR, 'spawn-queue');
 
 // Import alert manager
 const { sendAlertSync, alertCircuitBreaker } = require('./modules/alert-manager');
 
+// ============================================================================
+// Timeout configuration (self-contained, no external dependencies)
+// ============================================================================
+const AGENT_TIMEOUT_MS = 600000;      // 10 minutes
+const AGENT_TIMEOUT_SECONDS = 600;     // 10 minutes
+const DEPENDENCY_TIMEOUT_MS = 1800000; // 30 minutes
+const HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
+const ZOMBIE_TIMEOUT_MS = 300000;      // 5 minutes
+const MAX_RUNNING_TIME_MS = 3600000;   // 60 minutes
+
+// Path sanitization for agent labels (prevent path traversal in spawn queue filenames)
+function sanitizeLabel(label) {
+  if (!label || typeof label !== 'string') return 'unnamed';
+  // Remove path traversal chars and replace invalid filename chars with dash
+  return label.replace(/[\/\\..]/g, '-').replace(/[<>:"|?*]/g, '-').substring(0, 64);
+}
+
+/**
+ * Get agent timeout config from stability.json or use defaults
+ */
+function getAgentTimeoutConfig(config = null) {
+  const stabilityConfig = config || {};
+  return {
+    runTimeoutMs: stabilityConfig.agent?.runTimeoutMs || AGENT_TIMEOUT_MS,
+    runTimeoutSeconds: stabilityConfig.agent?.runTimeoutSeconds || AGENT_TIMEOUT_SECONDS,
+  };
+}
+
+/**
+ * Get dependency timeout config from stability.json or use defaults
+ */
+function getDependencyTimeoutConfig(config = null) {
+  const stabilityConfig = config || {};
+  return {
+    dependencyTimeoutMs: stabilityConfig.advance?.dependencyTimeoutMs || DEPENDENCY_TIMEOUT_MS,
+  };
+}
+
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    console.warn(`[supervisor-runner] Failed to read ${file}: ${e.message}`);
+    return fallback;
+  }
 }
 
 function writeJson(file, data) {
@@ -212,10 +256,10 @@ function buildAgentPrompt(subtask, taskContext) {
     `- Task Brief: ${briefPath}`,
     ``,
     `## Your Capabilities`,
-    `Allowed tools: ${subtask.skills.join(', ')}`,
+    `Allowed tools: ${(subtask.skills || []).join(', ')}`,
     ``,
     `## Constraints`,
-    `Denied tools: ${subtask.deny.join(', ')}`,
+    `Denied tools: ${(subtask.deny || []).join(', ')}`,
     ``,
     `## Working Memory`,
     `Scope: ${subtask.memory.scope}`,
@@ -288,11 +332,13 @@ function buildAgentPrompt(subtask, taskContext) {
     `20. Respect your prompt token budget by staying concise and role-focused; do not write long narrative unless your role is moderator or documentation`,
     `21. If your reputation tier is guarded or cooldown, be extra conservative: avoid speculative tool use and prefer auditable outputs`,
     ``,
-    `## Deliverable`,
-    `Provide a clear summary of what you accomplished, any artifacts created, handoff notes for teammates, and next-step suggestions.`,
+    `## Final Output Protocol (REQUIRED)`,
+    `Your entire final reply must consist of:`,
+    `1. OPTIONAL: A brief working summary (1-3 sentences)`,
+    `2. REQUIRED: Exactly ONE fenced json block (see below) as the LAST content in your reply`,
     ``,
-    `## Structured Completion`,
-    `At the end of your response, include exactly one fenced \`json\` block with this shape:`,
+    `The JSON block is your completion signal. Without it, your work cannot be tracked.`,
+    ``,
     `\`\`\`json`,
     `{`,
     `  "taskId": "${taskContext.id}",`,
@@ -307,7 +353,13 @@ function buildAgentPrompt(subtask, taskContext) {
     `  "nextStep": "single best next step"`,
     `}`,
     `\`\`\``,
-    `Use "status": "blocked" only when you cannot finish. Always keep the JSON valid and make it the last thing in your answer.`
+    ``,
+    `Rules:`,
+    `- The JSON block must be the very LAST thing in your reply`,
+    `- Do NOT output any text after the JSON block`,
+    `- Do NOT include multiple JSON blocks — exactly one`,
+    `- Use "status": "blocked" only when you cannot finish at all`,
+    `- Keep the JSON valid (no trailing commas, proper quotes)`
   ];
   return lines.join('\n');
 }
@@ -325,7 +377,7 @@ function spawnAgent(subtask, taskContext) {
     label: `${taskContext.id}-${subtask.workerId}`,
     model: resolved.model || 'minimax',
     cleanup: resolved.cleanup || 'keep',
-    timeoutSeconds: resolved.runTimeoutSeconds || 1800 // 30分钟超时
+    timeoutSeconds: resolved.runTimeoutSeconds || getAgentTimeoutConfig().runTimeoutSeconds
   };
   if (spawnConfig.runtime === 'subagent' && spawnConfig.mode === 'session') {
     spawnConfig.thread = true;
@@ -338,6 +390,59 @@ function spawnAgent(subtask, taskContext) {
     taskId: taskContext.id,
     sessionId: taskContext?.context?.sessionId || null
   };
+}
+
+/**
+ * Write spawn queue entries for newly spawned agents.
+ * This ensures the spawn queue is populated immediately when agents are allocated,
+ * rather than waiting for orchestration-watchdog to run later.
+ */
+function writeSpawnQueueEntries(spawnedAgents, taskId) {
+  if (!spawnedAgents || spawnedAgents.length === 0) return;
+
+  fs.mkdirSync(SPAWN_QUEUE_DIR, { recursive: true });
+
+  const queueEntries = [];
+  for (const agent of spawnedAgents) {
+    const payload = {
+      runtime: 'subagent',
+      agentId: agent.config?.agentId || 'main',
+      model: agent.config?.model || 'minimax',
+      mode: agent.config?.mode || 'run',
+      label: agent.label,
+      task: agent.config?.task || agent.prompt || '',
+      cleanup: agent.config?.cleanup || 'delete',
+      runTimeoutSeconds: agent.config?.timeoutSeconds || 600,
+      metadata: {
+        taskId: taskId,
+        sessionId: agent.sessionId || null,
+        workerId: agent.subtask?.workerId || null,
+        roleId: agent.subtask?.roleId || null,
+        teamId: agent.subtask?.teamId || null,
+        stage: agent.subtask?.stage || null
+      }
+    };
+
+    const safeLabel = sanitizeLabel(agent.label);
+    const triggerFile = path.join(SPAWN_QUEUE_DIR, `${Date.now()}-${safeLabel}.json`);
+    const trigger = {
+      action: 'spawn',
+      payload,
+      requestedAt: new Date().toISOString(),
+      source: 'allocateAgents',
+    };
+    fs.writeFileSync(triggerFile, JSON.stringify(trigger, null, 2));
+    queueEntries.push({ label: safeLabel, file: triggerFile });
+  }
+
+  // Update manifest
+  const manifest = {
+    generatedAt: new Date().toISOString(),
+    count: queueEntries.length,
+    agents: queueEntries.map(a => ({ label: a.label })),
+    root: SPAWN_QUEUE_DIR,
+  };
+  fs.writeFileSync(path.join(RUNTIME_DIR, 'spawn-queue-manifest.json'), JSON.stringify(manifest, null, 2));
 }
 
 function buildAgentRecord(subtask, taskContext, statusOverride = null, extras = {}) {
@@ -363,7 +468,7 @@ function buildAgentRecord(subtask, taskContext, statusOverride = null, extras = 
     model: spawnInfo.config.model,
     mode: spawnInfo.config.mode,
     cleanup: spawnInfo.config.cleanup,
-    runTimeoutSeconds: spawnInfo.config.timeoutSeconds || 1800,
+    runTimeoutSeconds: spawnInfo.config.timeoutSeconds || getAgentTimeoutConfig().runTimeoutSeconds,
     prompt: spawnInfo.config.task,
     label: spawnInfo.config.label,
     spawnConfig: spawnInfo.config,
@@ -389,9 +494,11 @@ function allocateAgents(task) {
     if (plan.executionMode === 'parallel') return true;
     return idx === 0; // 串行模式只启动第一个
   });
+  // Use Set for O(1) lookup instead of O(n) includes
+  const readySet = new Set(readySubtasks.map(st => st.workerId));
 
   const allocated = plan.subtasks.map((subtask, idx) => {
-    const isReady = readySubtasks.includes(subtask);
+    const isReady = readySet.has(subtask.workerId);
     const spawnInfo = spawnAgent(subtask, task);
     const agentRecord = buildAgentRecord(subtask, task, isReady ? 'spawning' : 'waiting');
 
@@ -405,7 +512,10 @@ function allocateAgents(task) {
   writeJson(ACTIVE_FILE, active.concat(allocated));
   task.status = 'allocated';
   task.updatedAt = new Date().toISOString();
-  
+
+  // Immediately write spawn queue entries so ops-watchdog can find them
+  writeSpawnQueueEntries(spawned, task.id);
+
   return { allocated, spawned, task };
 }
 
@@ -533,31 +643,41 @@ function deterministicAdvance(config = null) {
   const stabilityConfig = config || readJson(path.join(ROOT, 'config', 'stability.json'), {
     advance: { dependencyTimeoutMs: 1800000, autoAdvanceEnabled: true }
   });
-  
+
   if (!stabilityConfig.advance?.autoAdvanceEnabled) {
     return { advanced: 0, triggered: [] };
   }
-  
+
   const { syncActiveAgentsFromSessions } = require('./result-recovery');
   syncActiveAgentsFromSessions();
-  
+
   const active = readJson(ACTIVE_FILE, []);
   const waiting = active.filter(a => a.status === 'waiting');
   const triggered = [];
   let advanced = 0;
-  
+
+  // Use unified timeout config
+  const dependencyTimeouts = getDependencyTimeoutConfig();
+  const dependencyTimeoutMs = stabilityConfig.advance?.dependencyTimeoutMs || dependencyTimeouts.dependencyTimeoutMs;
+
   for (const agent of waiting) {
     const dependencyState = checkDependencyWithTimeout(
       agent,
       active,
-      stabilityConfig.advance?.dependencyTimeoutMs || 1800000
+      dependencyTimeoutMs
     );
     const ready = Boolean(dependencyState.ready);
     const blocking = Array.isArray(dependencyState.blocking) ? dependencyState.blocking : [];
     if (ready) {
+      // Dependencies met - trigger agent spawn
+      if (agent.status === 'waiting') {
+        agent.status = 'spawning';
+        agent.updatedAt = new Date().toISOString();
+        triggered.push(agent.label);
+      }
       advanced += 1;
     } else {
-      const timeout = stabilityConfig.advance?.dependencyTimeoutMs || 1800000;
+      const timeout = dependencyTimeoutMs;
       for (const blocked of blocking) {
         const blockId = typeof blocked === 'string' ? blocked : blocked?.id;
         if (!blockId) continue;
@@ -582,7 +702,8 @@ function deterministicAdvance(config = null) {
     }
   }
   
-  if (triggered.length > 0) {
+  // Write back if any agents were marked as failed or if any were advanced
+  if (triggered.length > 0 || advanced > 0) {
     writeJson(ACTIVE_FILE, active);
   }
   
@@ -596,7 +717,7 @@ function deterministicAdvance(config = null) {
  * @param {number} timeoutMs - Timeout in milliseconds
  * @returns {Object} { ready: boolean, reason: string }
  */
-function checkDependencyWithTimeout(agent, activeAgents, timeoutMs = 1800000) {
+function checkDependencyWithTimeout(agent, activeAgents, timeoutMs = getDependencyTimeoutConfig().dependencyTimeoutMs) {
   if (!agent.dependsOn || agent.dependsOn.length === 0) {
     return { ready: true, reason: 'no_dependencies' };
   }
@@ -641,26 +762,44 @@ function checkDependencyWithTimeout(agent, activeAgents, timeoutMs = 1800000) {
 function triggerNextStage(taskId, currentStage) {
   const task = loadTasks().find(t => t.data.id === taskId)?.data;
   if (!task) return { triggered: false, nextStage: null, error: 'task_not_found' };
-  
+
   const stabilityConfig = readJson(path.join(ROOT, 'config', 'stability.json'), {
     advance: { stageOrder: ['discovery', 'design', 'delivery', 'assurance'] }
   });
-  
+
   const stageOrder = stabilityConfig.advance?.stageOrder || ['discovery', 'design', 'delivery', 'assurance'];
   const currentIdx = stageOrder.indexOf(currentStage);
-  
+
   if (currentIdx < 0 || currentIdx >= stageOrder.length - 1) {
     return { triggered: false, nextStage: null, error: 'no_next_stage' };
   }
-  
+
   const nextStage = stageOrder[currentIdx + 1];
-  
+
   task.stage = nextStage;
   task.updatedAt = new Date().toISOString();
-  
+
   const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
   writeJson(taskFile, task);
-  
+
+  // Also update the corresponding agent's stage in active-agents.json
+  try {
+    const active = readJson(ACTIVE_FILE, []);
+    let agentUpdated = false;
+    for (const agent of active) {
+      if (agent.taskId === taskId && agent.stage === currentStage) {
+        agent.stage = nextStage;
+        agent.updatedAt = task.updatedAt;
+        agentUpdated = true;
+      }
+    }
+    if (agentUpdated) {
+      writeJson(ACTIVE_FILE, active);
+    }
+  } catch (e) {
+    console.warn(`[triggerNextStage] Failed to update active agents: ${e.message}`);
+  }
+
   return { triggered: true, nextStage, taskId };
 }
 
