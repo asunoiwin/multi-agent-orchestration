@@ -30,6 +30,14 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+function normalizeSpawnCall(call) {
+  const normalized = { ...call };
+  if (normalized.runtime === 'subagent' && normalized.mode === 'session') {
+    normalized.thread = true;
+  }
+  return normalized;
+}
+
 function resolveAgent(roleId) {
   const mapping = readJson(MAPPING_FILE, { mapping: {}, defaults: {} });
   const mapped = mapping.mapping[roleId];
@@ -59,8 +67,9 @@ async function execute(taskText) {
   const spawnCalls = [];
   for (const inst of result.spawnInstructions) {
     const resolved = resolveAgent(inst.roleId);
-    spawnCalls.push({
+    spawnCalls.push(normalizeSpawnCall({
       label: inst.label,
+      workerId: inst.spawnCall?.metadata?.workerId || inst.roleId,
       roleId: inst.roleId,
       title: inst.title,
       agentId: resolved.agentId,
@@ -72,9 +81,12 @@ async function execute(taskText) {
       metadata: {
         taskId: result.taskId,
         sessionId: result.context?.sessionId || null,
-        roleId: inst.roleId
+        workerId: inst.spawnCall?.metadata?.workerId || inst.roleId,
+        roleId: inst.roleId,
+        teamId: inst.spawnCall?.metadata?.teamId || null,
+        stage: inst.spawnCall?.metadata?.stage || null
       }
-    });
+    }));
   }
 
   // Step 3: 把待执行的后续 agent 也准备好（串行模式下 waiting 的）
@@ -83,6 +95,7 @@ async function execute(taskText) {
     .map(st => {
       const resolved = resolveAgent(st.roleId);
       return {
+        workerId: st.workerId,
         roleId: st.roleId,
         title: st.title,
         agentId: resolved.agentId,
@@ -93,7 +106,8 @@ async function execute(taskText) {
           id: result.taskId,
           context: result.context || {},
           task: taskText,
-          executionMode: result.plan.executionMode
+          executionMode: result.plan.executionMode,
+          syncPlan: result.plan.syncPlan
         })
       };
     });
@@ -103,6 +117,9 @@ async function execute(taskText) {
     context: result.context || {},
     mode: 'multi',
     executionMode: result.plan.executionMode,
+    collaborationModel: result.plan.collaborationModel,
+    teams: result.plan.teams,
+    syncPlan: result.plan.syncPlan,
     spawnNow: spawnCalls,
     spawnLater: waitingRoles,
     totalAgents: spawnCalls.length + waitingRoles.length

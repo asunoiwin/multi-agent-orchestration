@@ -106,7 +106,7 @@ function analyzeParallelism(task) {
   }
   
   // 多任务符号检测
-  if (task.includes('|') || task.includes('&&') || task.includes('和') && task.split('和').length > 2) {
+  if (task.includes('|') || task.includes('&&') || (task.includes('和') && task.split('和').length > 2)) {
     return { parallel: true, reason: '检测到多任务分隔符' };
   }
   

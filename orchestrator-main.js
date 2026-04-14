@@ -26,6 +26,13 @@ async function orchestrate(taskText, options = {}) {
   
   log('\n=== Step 1: Task Intake ===');
   const intake = enqueue(taskText, options.source || 'manual', options.context || {});
+  if (!intake) {
+    return {
+      skipped: true,
+      mode: 'internal',
+      message: 'Internal control payload skipped by task intake'
+    };
+  }
   log(`Task ID: ${intake.id}`);
   log(`Needs Multi-Agent: ${intake.payload.plan.needsMultiAgent}`);
   
@@ -60,9 +67,15 @@ async function orchestrate(taskText, options = {}) {
       title: agent.title,
       prompt: buildAgentPrompt(
         {
+          workerId: agent.workerId,
           roleId: agent.roleId,
           title: agent.title,
           description: agent.task,
+          stage: agent.stage,
+          teamId: agent.teamId,
+          capability: agent.capability,
+          collaborationMode: agent.collaborationMode,
+          coworkers: agent.coworkers,
           skills: agent.skills,
           deny: agent.deny,
           memory: agent.memory
@@ -71,7 +84,8 @@ async function orchestrate(taskText, options = {}) {
           id: intake.id,
           context: intake.payload.context,
           task: taskText,
-          executionMode: intake.payload.plan.executionMode
+          executionMode: intake.payload.plan.executionMode,
+          syncPlan: intake.payload.plan.syncPlan
         }
       ),
       spawnCall: {
@@ -85,7 +99,10 @@ async function orchestrate(taskText, options = {}) {
         metadata: {
           taskId: intake.id,
           sessionId: intake.payload.context?.sessionId || null,
+          workerId: agent.workerId,
           roleId: agent.roleId,
+          teamId: agent.teamId,
+          stage: agent.stage
         }
       }
     };

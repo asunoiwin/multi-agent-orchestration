@@ -34,6 +34,14 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+function normalizeSpawnPayload(payload) {
+  const normalized = { ...payload };
+  if (normalized.runtime === 'subagent' && normalized.mode === 'session') {
+    normalized.thread = true;
+  }
+  return normalized;
+}
+
 /**
  * 主自动执行函数
  * 
@@ -72,7 +80,7 @@ async function autoExecute(taskText, context = {}) {
     if (context.sessions_spawn) {
       try {
         // 真实调用 sessions_spawn
-        const result = await context.sessions_spawn({
+        const result = await context.sessions_spawn(normalizeSpawnPayload({
           runtime: 'subagent',
           agentId: agent.agentId,
           model: agent.model,
@@ -80,8 +88,9 @@ async function autoExecute(taskText, context = {}) {
           label: agent.label,
           task: agent.task,
           cleanup: agent.cleanup,
-          runTimeoutSeconds: agent.runTimeoutSeconds
-        });
+          runTimeoutSeconds: agent.runTimeoutSeconds,
+          metadata: agent.metadata || {}
+        }));
         
         log(`✓ Spawned: ${agent.label}`);
         spawnedLabels.push(agent.label);
@@ -153,16 +162,24 @@ async function progressNext(context = {}) {
     
     if (context.sessions_spawn) {
       try {
-        await context.sessions_spawn({
+        await context.sessions_spawn(normalizeSpawnPayload({
           runtime: 'subagent',
           agentId: agent.agentId || 'main',
           model: agent.model || 'minimax',
           mode: 'run',
           label: agent.label,
-          task: agent.task,
+          task: agent.prompt || agent.task,
           cleanup: 'delete',
-          runTimeoutSeconds: 600
-        });
+          runTimeoutSeconds: agent.runTimeoutSeconds || 600,
+          metadata: {
+            taskId: agent.taskId || null,
+            sessionId: agent.sessionId || null,
+            workerId: agent.workerId || null,
+            roleId: agent.roleId || null,
+            teamId: agent.teamId || null,
+            stage: agent.stage || null
+          }
+        }));
         
         log(`✓ Spawned: ${agent.label}`);
         updateAgentStatus(agent.label, 'running');

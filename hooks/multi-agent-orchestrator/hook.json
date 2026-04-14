@@ -1,0 +1,14 @@
+{
+  "name": "multi-agent-orchestrator",
+  "version": "1.2.0",
+  "description": "Dynamic multi-agent routing based on task complexity",
+  "events": ["agent"],
+  "scope": "main",
+  "enabled": true,
+  "config": {
+    "complexityThreshold": 6,
+    "multiAgentThreshold": 11,
+    "skipInternal": true,
+    "skipTrivial": true
+  }
+}

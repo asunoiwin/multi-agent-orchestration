@@ -1,0 +1,158 @@
+{
+  "version": "1.0.0",
+  "enabled": true,
+  "platformKeywords": {
+    "douyin": ["抖音", "douyin", "短视频", "视频号"],
+    "xiaohongshu": ["小红书", "rednote", "种草", "笔记"],
+    "weibo": ["微博", "热搜", "话题", "舆情"],
+    "bilibili": ["b站", "哔哩哔哩", "bilibili", "视频"],
+    "zhihu": ["知乎", "问答", "专栏"],
+    "kuaishou": ["快手", "ks", "快手热视频"],
+    "tieba": ["贴吧", "百度贴吧", "吧友"],
+    "forum": ["论坛", "reddit", "v2ex", "社区", "评论区"],
+    "taobao": ["淘宝", "tb", "天猫", "tmall"],
+    "jd": ["京东", "jd", "jd.com"],
+    "xianyu": ["闲鱼", "二手", "xianyu"],
+    "pinduoduo": ["拼多多", "pdd"],
+    "dewu": ["得物", "毒app", "球鞋"],
+    "meituan": ["美团", "外卖", "团购", "到店"],
+    "ctrip": ["携程", "酒店", "机票", "旅游"]
+  },
+  "triggerKeywords": [
+    "社媒",
+    "舆情",
+    "口碑",
+    "热点",
+    "热搜",
+    "评论",
+    "视频信息",
+    "达人",
+    "笔记",
+    "讨论热度",
+    "评论区观点",
+    "用户反馈",
+    "社区讨论",
+    "商品",
+    "店铺",
+    "价格",
+    "销量",
+    "评价",
+    "加购",
+    "攻略",
+    "酒店",
+    "机票",
+    "团购"
+  ],
+  "platformRoutes": {
+    "weibo": {
+      "preferredMode": "api",
+      "fallbackMode": "browser_session",
+      "sources": ["oneapi.weibo.search", "oneapi.weibo.detail", "browser_session.weibo.search", "browser.weibo.search"],
+      "notes": "微博优先走 OneAPI 搜索+详情，API 受限时优先回退用户浏览器会话。"
+    },
+    "douyin": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.douyin.search", "browser.douyin.search", "browser.douyin.detail", "ocr.video.cover"],
+      "notes": "抖音 API 当前易遇到 verify_check，主路径应保持用户浏览器和浏览器提取。"
+    },
+    "xiaohongshu": {
+      "preferredMode": "browser_session",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.xiaohongshu.search", "browser.xiaohongshu.search", "browser.xiaohongshu.detail"],
+      "notes": "小红书优先用户浏览器会话，再回退浏览器搜索。"
+    },
+    "bilibili": {
+      "preferredMode": "browser_session",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.bilibili.search", "browser.bilibili.search", "browser.bilibili.detail"],
+      "notes": "B 站优先用户浏览器会话，再回退浏览器检索。"
+    },
+    "zhihu": {
+      "preferredMode": "browser_session",
+      "fallbackMode": "web_fetch",
+      "sources": ["browser_session.zhihu.search", "browser.zhihu.search", "browser.zhihu.answer", "web_fetch.zhihu.page"],
+      "notes": "知乎优先用户浏览器会话，必要时再回退浏览器和直接网页抓取。"
+    },
+    "kuaishou": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser.kuaishou.search", "browser.kuaishou.detail"],
+      "notes": "快手优先浏览器检索和详情页提取。"
+    },
+    "tieba": {
+      "preferredMode": "browser",
+      "fallbackMode": "web_fetch",
+      "sources": ["browser.tieba.search", "browser.tieba.thread", "web_fetch.tieba.thread"],
+      "notes": "贴吧优先浏览器搜索和帖子页，必要时直接抓取帖子。"
+    },
+    "forum": {
+      "preferredMode": "browser",
+      "fallbackMode": "web_fetch",
+      "sources": ["browser.community.search", "web_fetch.community.thread"],
+      "notes": "论坛/社区优先浏览器，必要时直接抓取。"
+    },
+    "taobao": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.taobao.search", "browser.taobao.search", "browser.taobao.item", "browser.tmall.search"],
+      "notes": "淘宝/天猫优先用户浏览器，重点保留价格、销量、店铺、筛选条件。"
+    },
+    "jd": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.jd.search", "browser.jd.search", "browser.jd.item"],
+      "notes": "京东优先用户浏览器，重点保留价格、店铺、评价和配送信息。"
+    },
+    "xianyu": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.xianyu.search", "browser.xianyu.item"],
+      "notes": "闲鱼优先用户浏览器，重点保留卖家、成色、价格、位置和发布时间。"
+    },
+    "pinduoduo": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.pinduoduo.search", "browser.pinduoduo.item"],
+      "notes": "拼多多优先用户浏览器，重点保留价格、拼单信息、销量和评价。"
+    },
+    "dewu": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.dewu.search", "browser.dewu.item"],
+      "notes": "得物优先用户浏览器，重点保留价格、鉴定信息、尺码和交易状态。"
+    },
+    "meituan": {
+      "preferredMode": "browser",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.meituan.search", "browser.meituan.store"],
+      "notes": "美团优先用户浏览器，重点保留店铺、价格、评分、位置和套餐。"
+    },
+    "ctrip": {
+      "preferredMode": "browser_session",
+      "fallbackMode": "browser",
+      "sources": ["browser_session.ctrip.search", "browser.ctrip.search", "browser.ctrip.hotel", "browser.ctrip.flight"],
+      "notes": "携程优先用户浏览器会话，再回退浏览器；重点保留价格、时间、地点、评分和退改规则。"
+    }
+  },
+  "defaultOutputs": [
+    "source_inventory",
+    "collection_plan",
+    "evidence_cards",
+    "deduped_findings",
+    "credibility_notes",
+    "meeting_brief"
+  ],
+  "maxEvidenceCards": 8,
+  "maxSourcesPerPlatform": 5,
+  "evidenceCardFields": [
+    "platform",
+    "title",
+    "author",
+    "published_at",
+    "url",
+    "excerpt",
+    "signals",
+    "credibility"
+  ]
+}

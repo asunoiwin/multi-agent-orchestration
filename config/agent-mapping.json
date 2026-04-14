@@ -2,6 +2,10 @@
   "version": "2.0.0",
   "description": "Maps dynamic pool roles to real OpenClaw agent IDs",
   "mapping": {
+    "solution-architect": {
+      "agentId": "researcher",
+      "model": "minimax"
+    },
     "web-researcher": {
       "agentId": "researcher",
       "model": "minimax"
@@ -11,6 +15,10 @@
       "model": "minimax"
     },
     "quality-auditor": {
+      "agentId": "auditor",
+      "model": "minimax"
+    },
+    "test-engineer": {
       "agentId": "auditor",
       "model": "minimax"
     },

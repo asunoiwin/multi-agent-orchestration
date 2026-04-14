@@ -1,17 +1,67 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
+const { collectKeyPaths, createTaskBriefPayload } = require('./task-intake');
 
 const ROOT = __dirname;
 const CONFIG_FILE = path.join(ROOT, 'config', 'agent-pool.json');
+const MAPPING_FILE = path.join(ROOT, 'config', 'agent-mapping.json');
 const TASKS_DIR = path.join(ROOT, 'tasks');
 const RUNTIME_DIR = path.join(ROOT, 'runtime');
 const ACTIVE_FILE = path.join(RUNTIME_DIR, 'active-agents.json');
 const STATE_FILE = path.join(RUNTIME_DIR, 'supervisor-state.json');
+const BRIEF_DIR = path.join(RUNTIME_DIR, 'task-briefs');
+const SPAWN_QUEUE_DIR = path.join(RUNTIME_DIR, 'spawn-queue');
+
+// Import alert manager
+const { sendAlertSync, alertCircuitBreaker } = require('./modules/alert-manager');
+
+// ============================================================================
+// Timeout configuration (self-contained, no external dependencies)
+// ============================================================================
+const AGENT_TIMEOUT_MS = 600000;      // 10 minutes
+const AGENT_TIMEOUT_SECONDS = 600;     // 10 minutes
+const DEPENDENCY_TIMEOUT_MS = 1800000; // 30 minutes
+const HEALTH_CHECK_INTERVAL_MS = 60000; // 1 minute
+const ZOMBIE_TIMEOUT_MS = 300000;      // 5 minutes
+const MAX_RUNNING_TIME_MS = 3600000;   // 60 minutes
+
+// Path sanitization for agent labels (prevent path traversal in spawn queue filenames)
+function sanitizeLabel(label) {
+  if (!label || typeof label !== 'string') return 'unnamed';
+  // Remove path traversal chars and replace invalid filename chars with dash
+  return label.replace(/[\/\\..]/g, '-').replace(/[<>:"|?*]/g, '-').substring(0, 64);
+}
+
+/**
+ * Get agent timeout config from stability.json or use defaults
+ */
+function getAgentTimeoutConfig(config = null) {
+  const stabilityConfig = config || {};
+  return {
+    runTimeoutMs: stabilityConfig.agent?.runTimeoutMs || AGENT_TIMEOUT_MS,
+    runTimeoutSeconds: stabilityConfig.agent?.runTimeoutSeconds || AGENT_TIMEOUT_SECONDS,
+  };
+}
+
+/**
+ * Get dependency timeout config from stability.json or use defaults
+ */
+function getDependencyTimeoutConfig(config = null) {
+  const stabilityConfig = config || {};
+  return {
+    dependencyTimeoutMs: stabilityConfig.advance?.dependencyTimeoutMs || DEPENDENCY_TIMEOUT_MS,
+  };
+}
 
 function readJson(file, fallback = null) {
   if (!fs.existsSync(file)) return fallback;
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (e) {
+    console.warn(`[supervisor-runner] Failed to read ${file}: ${e.message}`);
+    return fallback;
+  }
 }
 
 function writeJson(file, data) {
@@ -19,16 +69,174 @@ function writeJson(file, data) {
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
 }
 
+function extractDependencyHandoffs(taskContext, subtask) {
+  const summaryAgents = Array.isArray(taskContext?.summary?.agents) ? taskContext.summary.agents : [];
+  const dependsOn = Array.isArray(subtask?.dependsOn) ? subtask.dependsOn : [];
+  if (dependsOn.length === 0) return [];
+
+  return dependsOn
+    .map((workerId) => summaryAgents.find((agent) => agent?.workerId === workerId))
+    .filter(Boolean)
+    .map((agent) => {
+      const completion = agent?.result?.structuredCompletion || null;
+      const artifacts = Array.isArray(completion?.artifacts)
+        ? completion.artifacts.filter((item) => typeof item === 'string' && item.trim())
+        : [];
+      const handoff = Array.isArray(completion?.handoff)
+        ? completion.handoff.filter((item) => typeof item === 'string' && item.trim())
+        : [];
+      return {
+        workerId: agent.workerId,
+        roleId: agent.roleId,
+        summary: completion?.summary || agent?.result?.summary || '',
+        artifacts,
+        handoff,
+        nextStep: typeof completion?.nextStep === 'string' ? completion.nextStep : ''
+      };
+    });
+}
+
+function formatMeetingSection(taskContext, subtask) {
+  const meetingPlan = taskContext?.plan?.meetingPlan || taskContext?.meetingPlan || null;
+  if (!meetingPlan?.enabled) {
+    return ['Meeting Mode: disabled'];
+  }
+
+  const participants = Array.isArray(meetingPlan.participants) ? meetingPlan.participants : [];
+  const currentSeat = participants.find((seat) => seat.workerId === subtask.workerId || seat.roleId === subtask.roleId) || null;
+  const agenda = Array.isArray(meetingPlan.agenda) ? meetingPlan.agenda : [];
+  const outputs = Array.isArray(meetingPlan.outputs) ? meetingPlan.outputs : [];
+  const stopConditions = Array.isArray(meetingPlan.stopConditions) ? meetingPlan.stopConditions : [];
+  const consensus = meetingPlan.consensus || {};
+
+  return [
+    `Meeting Mode: ${meetingPlan.mode || 'structured_panel'}`,
+    `Meeting Rounds: ${meetingPlan.rounds || 0}`,
+    `Meeting Seat: ${currentSeat ? `${currentSeat.seat} (${currentSeat.roleId})` : 'execution-only participant'}`,
+    participants.length > 0
+      ? `Meeting Participants: ${participants.map((seat) => `${seat.seat}:${seat.roleId}`).join(', ')}`
+      : `Meeting Participants: none`,
+    agenda.length > 0 ? `Meeting Agenda: ${agenda.join(' | ')}` : `Meeting Agenda: none`,
+    outputs.length > 0 ? `Meeting Outputs: ${outputs.join(' | ')}` : `Meeting Outputs: none`,
+    stopConditions.length > 0 ? `Meeting Stop Conditions: ${stopConditions.join(' | ')}` : `Meeting Stop Conditions: none`,
+    consensus?.method ? `Meeting Consensus: ${consensus.method}` : `Meeting Consensus: weighted consensus`
+  ];
+}
+
+function formatIntelligenceSection(taskContext) {
+  const intelligencePlan = taskContext?.plan?.intelligencePlan || taskContext?.intelligencePlan || null;
+  if (!intelligencePlan?.enabled) {
+    return ['Intelligence Mode: disabled'];
+  }
+
+  const routes = Array.isArray(intelligencePlan.routes) ? intelligencePlan.routes : [];
+  const outputs = Array.isArray(intelligencePlan.outputs) ? intelligencePlan.outputs : [];
+  const collectionPlan = Array.isArray(intelligencePlan.collectionPlan) ? intelligencePlan.collectionPlan : [];
+  const evidenceSchema = Array.isArray(intelligencePlan.evidenceSchema) ? intelligencePlan.evidenceSchema : [];
+  const skillPath = intelligencePlan.skillPath || null;
+  return [
+    `Intelligence Mode: ${intelligencePlan.mode || 'multi-source-social-intel'}`,
+    `Platforms: ${(intelligencePlan.platforms || []).join(', ') || 'none'}`,
+    routes.length > 0
+      ? `Routes: ${routes.map((route) => `${route.platform}:${route.preferredMode}->${route.fallbackMode}`).join(' | ')}`
+      : `Routes: none`,
+    collectionPlan.length > 0
+      ? `Collection Plan: ${collectionPlan.map((item) => `${item.platform}[${item.maxSources}] via ${item.primarySearchTool || item.preferredMode}`).join(' | ')}`
+      : `Collection Plan: none`,
+    skillPath ? `Skill: ${skillPath}` : `Skill: none`,
+    evidenceSchema.length > 0 ? `Evidence Schema: ${evidenceSchema.join(', ')}` : `Evidence Schema: none`,
+    outputs.length > 0 ? `Expected Intelligence Outputs: ${outputs.join(' | ')}` : `Expected Intelligence Outputs: none`,
+    intelligencePlan.rationale ? `Rationale: ${intelligencePlan.rationale}` : `Rationale: none`,
+    'Search Rule: 泛搜索优先运行 /Users/rico/.openclaw/workspace/scripts/web-search-structured.sh；微博可走 API；抖音/小红书/B站/知乎优先浏览器。'
+  ];
+}
+
+function resolveAgent(roleId) {
+  const mapping = readJson(MAPPING_FILE, { mapping: {}, defaults: {} });
+  const mapped = mapping.mapping?.[roleId];
+  return { ...(mapping.defaults || {}), ...(mapped || {}) };
+}
+
+function ensureTaskBrief(taskContext) {
+  fs.mkdirSync(BRIEF_DIR, { recursive: true });
+  const briefPath = path.join(BRIEF_DIR, `${taskContext.id}.json`);
+  const existing = readJson(briefPath, {});
+  const taskRoot = taskContext?.context?.taskRoot || taskContext?.taskRoot || ROOT;
+  const basePayload = createTaskBriefPayload({
+    id: taskContext.id,
+    task: taskContext?.task || taskContext?.plan?.task || existing.task || 'unknown',
+    context: {
+      taskRoot
+    },
+    plan: {
+      executionMode: taskContext?.executionMode || taskContext?.plan?.executionMode || existing.executionMode || 'hybrid',
+      collaborationModel: taskContext?.plan?.collaborationModel || existing.collaborationModel || 'company',
+      selectedRoles: Array.isArray(taskContext?.plan?.selectedRoles) && taskContext.plan.selectedRoles.length > 0
+        ? taskContext.plan.selectedRoles
+        : Array.isArray(existing.selectedRoles) ? existing.selectedRoles : [],
+      staffingPlan: Array.isArray(taskContext?.plan?.staffingPlan) && taskContext.plan.staffingPlan.length > 0
+        ? taskContext.plan.staffingPlan
+        : Array.isArray(existing.staffingPlan) ? existing.staffingPlan : [],
+      teams: Array.isArray(taskContext?.plan?.teams) && taskContext.plan.teams.length > 0
+        ? taskContext.plan.teams
+        : Array.isArray(existing.teams) ? existing.teams : [],
+      syncPlan: Array.isArray(taskContext?.plan?.syncPlan) && taskContext.plan.syncPlan.length > 0
+        ? taskContext.plan.syncPlan
+        : Array.isArray(existing.syncPlan) ? existing.syncPlan : []
+    }
+  }, {
+    taskRoot,
+    keyPaths: collectKeyPaths(taskRoot),
+    hasReadme: fs.existsSync(path.join(taskRoot, 'README.md')),
+    hasPackageJson: fs.existsSync(path.join(taskRoot, 'package.json')),
+    hasSourceTree: fs.existsSync(path.join(taskRoot, 'src')),
+    hasRuntimeState: fs.existsSync(path.join(taskRoot, 'runtime'))
+  });
+  const payload = {
+    ...basePayload,
+    teams: basePayload.teams.length > 0 ? basePayload.teams : Array.isArray(existing.teams) ? existing.teams : [],
+    syncPlan: basePayload.syncPlan.length > 0 ? basePayload.syncPlan : Array.isArray(existing.syncPlan) ? existing.syncPlan : [],
+    selectedRoles: basePayload.selectedRoles.length > 0 ? basePayload.selectedRoles : Array.isArray(existing.selectedRoles) ? existing.selectedRoles : [],
+    staffingPlan: basePayload.staffingPlan.length > 0 ? basePayload.staffingPlan : Array.isArray(existing.staffingPlan) ? existing.staffingPlan : []
+  };
+  writeJson(briefPath, payload);
+  return briefPath;
+}
+
 function loadTasks() {
   if (!fs.existsSync(TASKS_DIR)) return [];
   return fs.readdirSync(TASKS_DIR)
     .filter(f => f.endsWith('.json'))
-    .map(f => ({ file: path.join(TASKS_DIR, f), data: readJson(path.join(TASKS_DIR, f)) }))
+    .map((f) => {
+      const file = path.join(TASKS_DIR, f);
+      const data = readJson(file, null);
+      if (!data || typeof data !== 'object') {
+        return null;
+      }
+      return { file, data };
+    })
+    .filter(Boolean)
     .sort((a, b) => new Date(a.data.createdAt) - new Date(b.data.createdAt));
 }
 
 function buildAgentPrompt(subtask, taskContext) {
   const sessionId = taskContext?.context?.sessionId || taskContext?.sessionId || 'unknown';
+  const originalTask = taskContext?.task || taskContext?.plan?.task || 'unknown';
+  const executionMode = taskContext?.executionMode || taskContext?.plan?.executionMode || 'hybrid';
+  const taskRoot = taskContext?.context?.taskRoot || taskContext?.taskRoot || ROOT;
+  const briefPath = ensureTaskBrief(taskContext);
+  const syncPlan = Array.isArray(taskContext?.syncPlan)
+    ? taskContext.syncPlan
+    : Array.isArray(taskContext?.plan?.syncPlan)
+      ? taskContext.plan.syncPlan
+      : [];
+  const coworkers = Array.isArray(subtask.coworkers) ? subtask.coworkers : [];
+  const relevantSyncs = syncPlan.filter(point => (point.participants || []).includes(subtask.workerId));
+  const dependencyHandoffs = extractDependencyHandoffs(taskContext, subtask);
+  const reputation = subtask.reputation || {};
+  const resourceBudget = subtask.resourceBudget || {};
+  const meetingSection = formatMeetingSection(taskContext, subtask);
+  const intelligenceSection = formatIntelligenceSection(taskContext);
   const lines = [
     `# Role: ${subtask.title}`,
     ``,
@@ -38,53 +246,235 @@ function buildAgentPrompt(subtask, taskContext) {
     `## Task Context`,
     `- Task ID: ${taskContext.id}`,
     `- Session ID: ${sessionId}`,
-    `- Original Task: ${taskContext.task}`,
+    `- Original Task: ${originalTask}`,
     `- Your Role: ${subtask.roleId}`,
-    `- Execution Mode: ${taskContext.executionMode}`,
+    `- Worker ID: ${subtask.workerId}`,
+    `- Team ID: ${subtask.teamId}`,
+    `- Stage: ${subtask.stage}`,
+    `- Execution Mode: ${executionMode}`,
+    `- Task Root: ${taskRoot}`,
+    `- Task Brief: ${briefPath}`,
     ``,
     `## Your Capabilities`,
-    `Allowed tools: ${subtask.skills.join(', ')}`,
+    `Allowed tools: ${(subtask.skills || []).join(', ')}`,
     ``,
     `## Constraints`,
-    `Denied tools: ${subtask.deny.join(', ')}`,
+    `Denied tools: ${(subtask.deny || []).join(', ')}`,
     ``,
     `## Working Memory`,
     `Scope: ${subtask.memory.scope}`,
     `Track: ${subtask.memory.items.join(', ')}`,
+    ``,
+    `## Team Collaboration`,
+    coworkers.length > 0
+      ? `Coworkers: ${coworkers.map(worker => `${worker.title}(${worker.workerId})`).join(', ')}`
+      : `Coworkers: none`,
+    `Collaboration Mode: ${subtask.collaborationMode}`,
+    relevantSyncs.length > 0
+      ? `Sync Points: ${relevantSyncs.map(point => `${point.id}:${point.kind}`).join(', ')}`
+      : `Sync Points: none`,
+    ``,
+    `## Reputation And Budget`,
+    `Reputation Score: ${Number(reputation.score ?? 70)}`,
+    `Reputation Tier: ${reputation.tier || 'standard'}`,
+    `Priority Weight: ${Number(reputation.priorityWeight ?? 1)}`,
+    `Prompt Token Budget: ${Number(resourceBudget.promptTokens ?? 0)}`,
+    `Context Window Hint: ${Number(resourceBudget.contextItems ?? 0)}`,
+    `Max Rounds: ${Number(resourceBudget.maxRounds ?? 1)}`,
+    `Can Persist Across Stages: ${resourceBudget.persistAcrossStages ? 'yes' : 'no'}`,
+    ``,
+    `## Deliberation`,
+    ...meetingSection,
+    ``,
+    `## Intelligence`,
+    ...intelligenceSection,
+    ``,
+    `## Upstream Handoff`,
+    dependencyHandoffs.length > 0
+      ? `Completed dependencies: ${dependencyHandoffs.map((entry) => `${entry.workerId}(${entry.roleId})`).join(', ')}`
+      : `Completed dependencies: none`,
+    ...(dependencyHandoffs.length > 0
+      ? dependencyHandoffs.flatMap((entry, idx) => [
+          `Dependency ${idx + 1}: ${entry.workerId} (${entry.roleId})`,
+          entry.summary ? `- Summary: ${entry.summary}` : `- Summary: none`,
+          entry.artifacts.length > 0
+            ? `- Artifacts: ${entry.artifacts.join(', ')}`
+            : `- Artifacts: none`,
+          entry.handoff.length > 0
+            ? `- Handoff: ${entry.handoff.join(' | ')}`
+            : `- Handoff: none`,
+          entry.nextStep ? `- Recommended next step: ${entry.nextStep}` : `- Recommended next step: none`
+        ])
+      : []),
+    `- Prefer the exact artifact paths above over guessed filenames from older memory.`,
+    `- If a referenced file is missing, fall back to the listed existing artifact paths in the handoff instead of inventing alternates.`,
     ``,
     `## Instructions`,
     `1. Focus only on your role's responsibility`,
     `2. Use only allowed tools`,
     `3. Track required memory items and keep task/session metadata attached to notes`,
     `4. When storing progress, include taskId=${taskContext.id} and sessionId=${sessionId}`,
-    `5. Report results clearly when done`,
-    `6. If blocked, explain why and what you need`,
+    `5. Share assumptions, blockers, and interface decisions with your team in your output`,
+    `6. If there are coworkers in the same team, explicitly state what you are owning vs. what they should own`,
+    `7. Report results clearly when done`,
+    `8. If blocked, explain why and what you need`,
+    `9. Do not broaden the task scope beyond your current stage and role`,
+    `10. Do not spend time exploring identity/bootstrap/persona files unless the task explicitly asks for them`,
+    `11. If the original task is broad or underspecified, make the smallest reasonable stage-scoped assumption and finish with a best-effort deliverable`,
+    `12. If you truly cannot proceed, return a structured completion with "status": "blocked" instead of asking open-ended questions`,
+    `13. Default assumption: the target system is the current repository/workspace unless the task explicitly points elsewhere`,
+    `14. Your stage objective is: ${subtask.description}`,
+    `15. Treat ${taskRoot} as the source-of-truth repository for this task; prefer reading and operating there instead of your role workspace`,
+    `16. If you need to inspect files, start from ${taskRoot} and reference absolute paths in your output`,
+    `17. Read ${briefPath} first when you need the authoritative task snapshot, team plan, or sync points`,
+    `18. If intelligence mode is enabled and your role involves research, prioritize the configured platform routes and return structured evidence instead of loose notes`,
+    `19. If meeting mode is enabled and you are a meeting participant, answer in a decision-oriented style: constraints, options, risks, recommendation, then handoff`,
+    `20. Respect your prompt token budget by staying concise and role-focused; do not write long narrative unless your role is moderator or documentation`,
+    `21. If your reputation tier is guarded or cooldown, be extra conservative: avoid speculative tool use and prefer auditable outputs`,
     ``,
-    `## Deliverable`,
-    `Provide a clear summary of what you accomplished and any artifacts created.`
+    `## Final Output Protocol (REQUIRED)`,
+    `Your entire final reply must consist of:`,
+    `1. OPTIONAL: A brief working summary (1-3 sentences)`,
+    `2. REQUIRED: Exactly ONE fenced json block (see below) as the LAST content in your reply`,
+    ``,
+    `The JSON block is your completion signal. Without it, your work cannot be tracked.`,
+    ``,
+    `\`\`\`json`,
+    `{`,
+    `  "taskId": "${taskContext.id}",`,
+    `  "sessionId": "${sessionId}",`,
+    `  "workerId": "${subtask.workerId}",`,
+    `  "roleId": "${subtask.roleId}",`,
+    `  "status": "completed",`,
+    `  "summary": "One concise paragraph of your finished result",`,
+    `  "artifacts": ["paths, links, or outputs"],`,
+    `  "blockers": [],`,
+    `  "handoff": ["what teammates should do next"],`,
+    `  "nextStep": "single best next step"`,
+    `}`,
+    `\`\`\``,
+    ``,
+    `Rules:`,
+    `- The JSON block must be the very LAST thing in your reply`,
+    `- Do NOT output any text after the JSON block`,
+    `- Do NOT include multiple JSON blocks — exactly one`,
+    `- Use "status": "blocked" only when you cannot finish at all`,
+    `- Keep the JSON valid (no trailing commas, proper quotes)`
   ];
   return lines.join('\n');
 }
 
 function spawnAgent(subtask, taskContext) {
   const prompt = buildAgentPrompt(subtask, taskContext);
+  const resolved = resolveAgent(subtask.roleId);
   
   // 构造 sessions_spawn 调用参数
   const spawnConfig = {
     runtime: 'subagent',
-    mode: 'session',
+    mode: resolved.mode || 'run',
+    agentId: resolved.agentId || 'main',
     task: prompt,
-    label: `${taskContext.id}-${subtask.roleId}`,
-    model: 'minimax',
-    cleanup: 'keep',
-    timeoutSeconds: 1800 // 30分钟超时
+    label: `${taskContext.id}-${subtask.workerId}`,
+    model: resolved.model || 'minimax',
+    cleanup: resolved.cleanup || 'keep',
+    timeoutSeconds: resolved.runTimeoutSeconds || getAgentTimeoutConfig().runTimeoutSeconds
   };
+  if (spawnConfig.runtime === 'subagent' && spawnConfig.mode === 'session') {
+    spawnConfig.thread = true;
+  }
   
   return {
     config: spawnConfig,
+    label: spawnConfig.label,
     subtask,
     taskId: taskContext.id,
     sessionId: taskContext?.context?.sessionId || null
+  };
+}
+
+/**
+ * Write spawn queue entries for newly spawned agents.
+ * This ensures the spawn queue is populated immediately when agents are allocated,
+ * rather than waiting for orchestration-watchdog to run later.
+ */
+function writeSpawnQueueEntries(spawnedAgents, taskId) {
+  if (!spawnedAgents || spawnedAgents.length === 0) return;
+
+  fs.mkdirSync(SPAWN_QUEUE_DIR, { recursive: true });
+
+  const queueEntries = [];
+  for (const agent of spawnedAgents) {
+    const payload = {
+      runtime: 'subagent',
+      agentId: agent.config?.agentId || 'main',
+      model: agent.config?.model || 'minimax',
+      mode: agent.config?.mode || 'run',
+      label: agent.label,
+      task: agent.config?.task || agent.prompt || '',
+      cleanup: agent.config?.cleanup || 'delete',
+      runTimeoutSeconds: agent.config?.timeoutSeconds || 600,
+      metadata: {
+        taskId: taskId,
+        sessionId: agent.sessionId || null,
+        workerId: agent.subtask?.workerId || null,
+        roleId: agent.subtask?.roleId || null,
+        teamId: agent.subtask?.teamId || null,
+        stage: agent.subtask?.stage || null
+      }
+    };
+
+    const safeLabel = sanitizeLabel(agent.label);
+    const triggerFile = path.join(SPAWN_QUEUE_DIR, `${Date.now()}-${safeLabel}.json`);
+    const trigger = {
+      action: 'spawn',
+      payload,
+      requestedAt: new Date().toISOString(),
+      source: 'allocateAgents',
+    };
+    fs.writeFileSync(triggerFile, JSON.stringify(trigger, null, 2));
+    queueEntries.push({ label: safeLabel, file: triggerFile });
+  }
+
+  // Update manifest
+  const manifest = {
+    generatedAt: new Date().toISOString(),
+    count: queueEntries.length,
+    agents: queueEntries.map(a => ({ label: a.label })),
+    root: SPAWN_QUEUE_DIR,
+  };
+  fs.writeFileSync(path.join(RUNTIME_DIR, 'spawn-queue-manifest.json'), JSON.stringify(manifest, null, 2));
+}
+
+function buildAgentRecord(subtask, taskContext, statusOverride = null, extras = {}) {
+  const spawnInfo = spawnAgent(subtask, taskContext);
+  const defaultStatus = statusOverride || 'waiting';
+  return {
+    taskId: taskContext.id,
+    sessionId: taskContext.context?.sessionId || null,
+    workerId: subtask.workerId,
+    roleId: subtask.roleId,
+    title: subtask.title,
+    stage: subtask.stage,
+    teamId: subtask.teamId,
+    capability: subtask.capability,
+    collaborationMode: subtask.collaborationMode,
+    status: defaultStatus,
+    dependsOn: subtask.dependsOn,
+    skills: subtask.skills,
+    deny: subtask.deny,
+    memory: subtask.memory,
+    coworkers: subtask.coworkers,
+    agentId: spawnInfo.config.agentId || 'main',
+    model: spawnInfo.config.model,
+    mode: spawnInfo.config.mode,
+    cleanup: spawnInfo.config.cleanup,
+    runTimeoutSeconds: spawnInfo.config.timeoutSeconds || getAgentTimeoutConfig().runTimeoutSeconds,
+    prompt: spawnInfo.config.task,
+    label: spawnInfo.config.label,
+    spawnConfig: spawnInfo.config,
+    createdAt: new Date().toISOString(),
+    task: subtask.description,
+    ...extras
   };
 }
 
@@ -104,28 +494,16 @@ function allocateAgents(task) {
     if (plan.executionMode === 'parallel') return true;
     return idx === 0; // 串行模式只启动第一个
   });
+  // Use Set for O(1) lookup instead of O(n) includes
+  const readySet = new Set(readySubtasks.map(st => st.workerId));
 
   const allocated = plan.subtasks.map((subtask, idx) => {
-    const isReady = readySubtasks.includes(subtask);
-    const agentRecord = {
-      taskId: task.id,
-      sessionId: task.context?.sessionId || null,
-      roleId: subtask.roleId,
-      title: subtask.title,
-      status: isReady ? 'spawning' : 'waiting',
-      dependsOn: subtask.dependsOn,
-      skills: subtask.skills,
-      deny: subtask.deny,
-      memory: subtask.memory,
-      createdAt: new Date().toISOString(),
-      task: subtask.description
-    };
+    const isReady = readySet.has(subtask.workerId);
+    const spawnInfo = spawnAgent(subtask, task);
+    const agentRecord = buildAgentRecord(subtask, task, isReady ? 'spawning' : 'waiting');
 
     if (isReady) {
-      const spawnInfo = spawnAgent(subtask, task);
       spawned.push(spawnInfo);
-      agentRecord.spawnConfig = spawnInfo.config;
-      agentRecord.label = spawnInfo.config.label;
     }
 
     return agentRecord;
@@ -134,7 +512,10 @@ function allocateAgents(task) {
   writeJson(ACTIVE_FILE, active.concat(allocated));
   task.status = 'allocated';
   task.updatedAt = new Date().toISOString();
-  
+
+  // Immediately write spawn queue entries so ops-watchdog can find them
+  writeSpawnQueueEntries(spawned, task.id);
+
   return { allocated, spawned, task };
 }
 
@@ -175,6 +556,440 @@ function supervisorRunOnce() {
   return state;
 }
 
+function loadTaskBriefs() {
+  if (!fs.existsSync(BRIEF_DIR)) return [];
+  return fs.readdirSync(BRIEF_DIR)
+    .filter(f => f.endsWith('.json'))
+    .map((f) => {
+      const file = path.join(BRIEF_DIR, f);
+      const data = readJson(file, null);
+      if (!data || typeof data !== 'object') return null;
+      return { file, data };
+    })
+    .filter(Boolean);
+}
+
+function rehydrateActiveTasks() {
+  let tasks = loadTasks();
+  // Fallback: if tasks/ is empty but task-briefs/ has data, reconstruct from briefs
+  if (tasks.length === 0) {
+    const briefs = loadTaskBriefs();
+    for (const brief of briefs) {
+      const taskId = brief.data.taskId;
+      if (!taskId) continue;
+      const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
+      if (fs.existsSync(taskFile)) continue;
+      // Check if this task was already archived — skip if so
+      const archiveDir = path.join(TASKS_DIR, 'archive');
+      const archivedFiles = fs.existsSync(archiveDir) ? fs.readdirSync(archiveDir) : [];
+      if (archivedFiles.some(f => f.startsWith(taskId))) continue;
+      // Only reconstruct multi-agent tasks
+      if (brief.data.executionMode === 'single' || brief.data.collaborationModel === 'solo') continue;
+      const reconstructed = {
+        id: taskId,
+        task: brief.data.task,
+        status: 'planned',
+        createdAt: brief.data.generatedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        context: { taskRoot: brief.data.taskRoot },
+        plan: {
+          needsMultiAgent: true,
+          executionMode: brief.data.executionMode,
+          collaborationModel: brief.data.collaborationModel,
+          selectedRoles: brief.data.selectedRoles,
+          staffingPlan: brief.data.staffingPlan,
+          teams: brief.data.teams,
+          syncPlan: brief.data.syncPlan,
+          meetingPlan: brief.data.meetingPlan,
+          intelligencePlan: brief.data.intelligencePlan,
+          subtasks: []
+        }
+      };
+      writeJson(taskFile, reconstructed);
+    }
+    tasks = loadTasks();
+  }
+  const active = readJson(ACTIVE_FILE, []);
+  const handled = [];
+  let changed = false;
+
+  for (const item of tasks) {
+    const task = item.data;
+    if (!task?.plan?.needsMultiAgent) continue;
+    const recoverableFromSummary = task.status === 'stalled'
+      && task.summary
+      && Number(task.summary.totalCount || 0) > Number(task.summary.completedCount || 0)
+      && ['in_progress', 'waiting'].includes(String(task.summary.status || ''));
+    if (!['planned', 'allocated', 'in_progress', 'waiting'].includes(task.status) && !recoverableFromSummary) continue;
+    if (recoverableFromSummary) {
+      task.status = String(task.summary.status || 'waiting');
+    }
+
+    const taskAgents = active.filter((agent) => agent.taskId === task.id);
+    const subtasks = task.plan?.subtasks || [];
+    const summaryAgents = Array.isArray(task.summary?.agents) ? task.summary.agents : [];
+    const existingWorkers = new Set(taskAgents.map((agent) => agent.workerId));
+
+    if (taskAgents.length > 0) {
+      const missingSubtasks = subtasks.filter((subtask) => !existingWorkers.has(subtask.workerId));
+      if (missingSubtasks.length === 0) continue;
+
+      const restored = [];
+      for (const subtask of missingSubtasks) {
+        const summaryAgent = summaryAgents.find((agent) => agent.workerId === subtask.workerId) || null;
+        const restoredStatus = summaryAgent?.status || (subtask.dependsOn?.length ? 'waiting' : 'spawning');
+        const extras = {};
+        if (summaryAgent?.result) {
+          extras.result = summaryAgent.result;
+        }
+        if (summaryAgent?.status === 'completed') {
+          extras.updatedAt = new Date().toISOString();
+        }
+        const record = buildAgentRecord(subtask, task, restoredStatus, extras);
+        active.push(record);
+        restored.push(record);
+        changed = true;
+      }
+
+      task.updatedAt = new Date().toISOString();
+      writeJson(item.file, task);
+      handled.push({
+        taskId: task.id,
+        restoredAgents: restored.length,
+        spawningAgents: restored.filter((agent) => agent.status === 'spawning').map((agent) => agent.workerId),
+        mode: 'partial'
+      });
+      continue;
+    }
+
+    const { allocated, spawned, task: updatedTask } = allocateAgents(task);
+    active.push(...allocated);
+    writeJson(item.file, updatedTask);
+    changed = true;
+    handled.push({
+      taskId: updatedTask.id,
+      restoredAgents: allocated.length,
+      spawningAgents: spawned.map((spawn) => spawn.subtask.workerId),
+      mode: 'full'
+    });
+  }
+
+  if (changed) {
+    writeJson(ACTIVE_FILE, active);
+  }
+
+  return {
+    restoredAt: new Date().toISOString(),
+    restoredCount: handled.length,
+    handled
+  };
+}
+
+/**
+ * Deterministic stage advancement - ensures triggering after dependencies are met
+ * @param {Object} config - Stability config (optional)
+ * @returns {Object} { advanced: number, triggered: string[] }
+ */
+function deterministicAdvance(config = null) {
+  const stabilityConfig = config || readJson(path.join(ROOT, 'config', 'stability.json'), {
+    advance: { dependencyTimeoutMs: 1800000, autoAdvanceEnabled: true }
+  });
+
+  if (!stabilityConfig.advance?.autoAdvanceEnabled) {
+    return { advanced: 0, triggered: [] };
+  }
+
+  const { syncActiveAgentsFromSessions } = require('./result-recovery');
+  syncActiveAgentsFromSessions();
+
+  const active = readJson(ACTIVE_FILE, []);
+  const waiting = active.filter(a => a.status === 'waiting');
+  const triggered = [];
+  let advanced = 0;
+
+  // Use unified timeout config
+  const dependencyTimeouts = getDependencyTimeoutConfig();
+  const dependencyTimeoutMs = stabilityConfig.advance?.dependencyTimeoutMs || dependencyTimeouts.dependencyTimeoutMs;
+
+  for (const agent of waiting) {
+    const dependencyState = checkDependencyWithTimeout(
+      agent,
+      active,
+      dependencyTimeoutMs
+    );
+    const ready = Boolean(dependencyState.ready);
+    const blocking = Array.isArray(dependencyState.blocking) ? dependencyState.blocking : [];
+    if (ready) {
+      // Dependencies met - trigger agent spawn
+      if (agent.status === 'waiting') {
+        agent.status = 'spawning';
+        agent.updatedAt = new Date().toISOString();
+        triggered.push(agent.label);
+      }
+      advanced += 1;
+    } else {
+      const timeout = dependencyTimeoutMs;
+      for (const blocked of blocking) {
+        const blockId = typeof blocked === 'string' ? blocked : blocked?.id;
+        if (!blockId) continue;
+        const dep = active.find(a => 
+          a.workerId === blockId || a.roleId === blockId || a.label === blockId
+        );
+        if (dep) {
+          const ageMs = Date.now() - Date.parse(dep.updatedAt || dep.createdAt || 0);
+          if (ageMs > timeout) {
+            dep.status = 'failed';
+            dep.result = { 
+              ...dep.result, 
+              autoHealed: true, 
+              healReason: 'dependency_timeout',
+              blockedAgent: agent.label 
+            };
+            dep.updatedAt = new Date().toISOString();
+            triggered.push(agent.label);
+          }
+        }
+      }
+    }
+  }
+  
+  // Write back if any agents were marked as failed or if any were advanced
+  if (triggered.length > 0 || advanced > 0) {
+    writeJson(ACTIVE_FILE, active);
+  }
+  
+  return { advanced, triggered };
+}
+
+/**
+ * Dependency check with timeout protection
+ * @param {Object} agent - Agent record
+ * @param {Array} activeAgents - Active agent list
+ * @param {number} timeoutMs - Timeout in milliseconds
+ * @returns {Object} { ready: boolean, reason: string }
+ */
+function checkDependencyWithTimeout(agent, activeAgents, timeoutMs = getDependencyTimeoutConfig().dependencyTimeoutMs) {
+  if (!agent.dependsOn || agent.dependsOn.length === 0) {
+    return { ready: true, reason: 'no_dependencies' };
+  }
+  
+  const blocking = [];
+  for (const depId of agent.dependsOn) {
+    const dep = activeAgents.find(a => 
+      a.taskId === agent.taskId &&
+      (a.workerId === depId || a.roleId === depId || a.label === depId)
+    );
+    
+    if (!dep) {
+      blocking.push({ id: depId, reason: 'not_found' });
+      continue;
+    }
+    
+    if (dep.status !== 'completed') {
+      const ageMs = Date.now() - Date.parse(dep.updatedAt || dep.createdAt || 0);
+      if (ageMs > timeoutMs) {
+        blocking.push({ id: depId, reason: 'timeout', ageMs });
+      } else if (dep.status === 'failed') {
+        blocking.push({ id: depId, reason: 'failed' });
+      } else {
+        blocking.push({ id: depId, reason: `status_${dep.status}` });
+      }
+    }
+  }
+  
+  return { 
+    ready: blocking.length === 0, 
+    blocking,
+    reason: blocking.length === 0 ? 'dependencies_met' : blocking.map(b => b.reason).join(',')
+  };
+}
+
+/**
+ * Stage trigger - advances task to next stage
+ * @param {string} taskId - Task ID
+ * @param {string} currentStage - Current stage
+ * @returns {Object} { triggered: boolean, nextStage: string|null }
+ */
+function triggerNextStage(taskId, currentStage) {
+  const task = loadTasks().find(t => t.data.id === taskId)?.data;
+  if (!task) return { triggered: false, nextStage: null, error: 'task_not_found' };
+
+  const stabilityConfig = readJson(path.join(ROOT, 'config', 'stability.json'), {
+    advance: { stageOrder: ['discovery', 'design', 'delivery', 'assurance'] }
+  });
+
+  const stageOrder = stabilityConfig.advance?.stageOrder || ['discovery', 'design', 'delivery', 'assurance'];
+  const currentIdx = stageOrder.indexOf(currentStage);
+
+  if (currentIdx < 0 || currentIdx >= stageOrder.length - 1) {
+    return { triggered: false, nextStage: null, error: 'no_next_stage' };
+  }
+
+  const nextStage = stageOrder[currentIdx + 1];
+
+  task.stage = nextStage;
+  task.updatedAt = new Date().toISOString();
+
+  const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
+  writeJson(taskFile, task);
+
+  // Also update the corresponding agent's stage in active-agents.json
+  try {
+    const active = readJson(ACTIVE_FILE, []);
+    let agentUpdated = false;
+    for (const agent of active) {
+      if (agent.taskId === taskId && agent.stage === currentStage) {
+        agent.stage = nextStage;
+        agent.updatedAt = task.updatedAt;
+        agentUpdated = true;
+      }
+    }
+    if (agentUpdated) {
+      writeJson(ACTIVE_FILE, active);
+    }
+  } catch (e) {
+    console.warn(`[triggerNextStage] Failed to update active agents: ${e.message}`);
+  }
+
+  return { triggered: true, nextStage, taskId };
+}
+
+/**
+ * Circuit Breaker - tracks consecutive failures and triggers circuit break
+ * @param {Object} config - Stability config (optional)
+ * @returns {Object} { tripped: string[], checked: number }
+ */
+function checkCircuitBreaker(config = null) {
+  const stabilityConfig = config || readJson(path.join(ROOT, 'config', 'stability.json'), {
+    circuitBreaker: { enabled: true, failureThreshold: 3, resetTimeoutMs: 300000 }
+  });
+  
+  if (!stabilityConfig.circuitBreaker?.enabled) {
+    return { tripped: [], checked: 0, reason: 'disabled' };
+  }
+  
+  const threshold = stabilityConfig.circuitBreaker?.failureThreshold || 3;
+  const active = readJson(ACTIVE_FILE, []);
+  const tripped = [];
+  
+  for (const agent of active) {
+    // Skip already broken/completed agents
+    if (agent.status === 'completed' || agent.status === 'broken') continue;
+    
+    // Check consecutive failures
+    const failures = agent.failureCount || 0;
+    if (failures >= threshold) {
+      // Trip the circuit breaker
+      agent.status = 'broken';
+      agent.result = {
+        ...agent.result,
+        circuitTripped: true,
+        tripReason: 'consecutive_failures',
+        failureCount: failures,
+        trippedAt: new Date().toISOString()
+      };
+      agent.updatedAt = new Date().toISOString();
+      tripped.push(agent.workerId);
+      
+      // Send alert
+      sendAlertSync('warning', 'circuit_breaker', {
+        agent: agent.label,
+        workerId: agent.workerId,
+        failureCount: failures,
+        threshold,
+        action: 'tripped'
+      });
+    }
+  }
+  
+  if (tripped.length > 0) {
+    writeJson(ACTIVE_FILE, active);
+  }
+  
+  return { tripped, checked: active.length };
+}
+
+/**
+ * Record a failure for an agent (call on task failure)
+ * @param {string} workerId - Agent worker ID
+ * @returns {Object} { success: boolean, failureCount: number }
+ */
+function recordFailure(workerId) {
+  const active = readJson(ACTIVE_FILE, []);
+  const agent = active.find(a => a.workerId === workerId);
+  
+  if (!agent) {
+    return { success: false, error: 'agent_not_found' };
+  }
+  
+  agent.failureCount = (agent.failureCount || 0) + 1;
+  agent.lastFailureAt = new Date().toISOString();
+  agent.updatedAt = new Date().toISOString();
+  
+  writeJson(ACTIVE_FILE, active);
+  
+  return { success: true, failureCount: agent.failureCount };
+}
+
+/**
+ * Record a success - resets failure count
+ * @param {string} workerId - Agent worker ID
+ * @returns {Object} { success: boolean }
+ */
+function recordSuccess(workerId) {
+  const active = readJson(ACTIVE_FILE, []);
+  const agent = active.find(a => a.workerId === workerId);
+  
+  if (!agent) {
+    return { success: false, error: 'agent_not_found' };
+  }
+  
+  agent.failureCount = 0;
+  agent.lastSuccessAt = new Date().toISOString();
+  agent.updatedAt = new Date().toISOString();
+  
+  writeJson(ACTIVE_FILE, active);
+  
+  return { success: true };
+}
+
+/**
+ * Manually reset circuit breaker for an agent
+ * @param {string} workerId - Agent worker ID
+ * @param {string} reason - Optional reason for reset
+ * @returns {Object} { success: boolean }
+ */
+function resetCircuitBreaker(workerId, reason = 'manual') {
+  const active = readJson(ACTIVE_FILE, []);
+  const agent = active.find(a => a.workerId === workerId);
+  
+  if (!agent) {
+    return { success: false, error: 'agent_not_found' };
+  }
+  
+  agent.status = 'waiting';
+  agent.failureCount = 0;
+  agent.circuitResetAt = new Date().toISOString();
+  agent.circuitResetReason = reason;
+  agent.updatedAt = new Date().toISOString();
+  agent.result = {
+    ...agent.result,
+    circuitReset: true,
+    resetReason: reason
+  };
+  
+  writeJson(ACTIVE_FILE, active);
+  
+  // Send alert
+  sendAlertSync('info', 'circuit_breaker_reset', {
+    agent: agent.label,
+    workerId,
+    reason
+  });
+  
+  return { success: true };
+}
+
 if (require.main === module) {
   const result = supervisorRunOnce();
   console.log(JSON.stringify(result, null, 2));
@@ -187,6 +1002,7 @@ if (require.main === module) {
         console.log(`  sessions_spawn({`);
         console.log(`    runtime: "subagent",`);
         console.log(`    mode: "session",`);
+        console.log(`    thread: true,`);
         console.log(`    label: "${s.label}",`);
         console.log(`    model: "minimax",`);
         console.log(`    task: "<see runtime/active-agents.json for full prompt>"`);
@@ -196,4 +1012,18 @@ if (require.main === module) {
   }
 }
 
-module.exports = { supervisorRunOnce, spawnAgent, buildAgentPrompt };
+module.exports = { 
+  supervisorRunOnce, 
+  spawnAgent, 
+  buildAgentPrompt, 
+  rehydrateActiveTasks,
+  // Phase 2 P1: Stage Advance Enhancement
+  deterministicAdvance,
+  checkDependencyWithTimeout,
+  triggerNextStage,
+  // Circuit Breaker
+  checkCircuitBreaker,
+  recordFailure,
+  recordSuccess,
+  resetCircuitBreaker
+};

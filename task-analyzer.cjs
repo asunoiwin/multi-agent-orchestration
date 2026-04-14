@@ -5,7 +5,7 @@
  * 借鉴 GPT 方案优化
  */
 
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 // ============================================================================
 // 评分配置
@@ -15,6 +15,17 @@ const SCORE_THRESHOLDS = {
   single: 6,
   multi: 11
 };
+
+function scoreDeliberationNeed(scores) {
+  let score = 0;
+  if ((scores.stages || 0) >= 3) score += 1;
+  if ((scores.domains || 0) >= 2) score += 1;
+  if ((scores.structure || 0) >= 2) score += 1;
+  if ((scores.uncertainty || 0) >= 2) score += 2;
+  if ((scores.risk || 0) >= 2) score += 2;
+  if ((scores.parallelism || 0) >= 2) score += 1;
+  return Math.min(score, 3);
+}
 
 // ============================================================================
 // 评分函数
@@ -27,14 +38,14 @@ function scoreStages(input) {
   let score = 0;
   
   // 明确阶段词
-  if (/调研|研究|分析|对比|评估|搜索/.test(input)) score++;
-  if (/设计|规划|方案|选型/.test(input)) score++;
-  if (/实现|开发|编写|构建|写|创建/.test(input)) score++;
-  if (/测试|验证|检查/.test(input)) score++;
-  if (/部署|发布|上线/.test(input)) score++;
+  if (/调研|研究|分析|对比|评估|搜索|排查|讨论|比较|权衡/.test(input)) score++;
+  if (/设计|规划|方案|选型|拆分|切分|制定|决策|路线/.test(input)) score++;
+  if (/实现|开发|编写|构建|写|创建|优化|修复|加固|执行|落地/.test(input)) score++;
+  if (/测试|验证|检查|回归|审查|评审|稳定|review/.test(input)) score++;
+  if (/恢复|推进|回收|交付|说明|总结|文档|handoff|移交/.test(input)) score++;
   
   // 明确多阶段
-  if (/第一.{1,10}第二|首先.{1,10}然后|分析.{1,20}实现/.test(input)) score = Math.min(score, 3);
+  if (/第一.{1,10}第二|首先.{1,10}然后|分析.{1,20}实现|恢复.{1,20}推进|修复.{1,20}(验证|交付)/.test(input)) score = Math.min(score + 1, 3);
   
   return Math.min(score, 3);
 }
@@ -55,17 +66,36 @@ function scoreParallelism(input) {
   return Math.min(score, 3);
 }
 
+function scoreStructure(input) {
+  let score = 0;
+  const listCount = (input.match(/、/g) || []).length;
+  const clauseCount = input
+    .split(/[,，;；。\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .length;
+  if (clauseCount >= 4) score += 1;
+  if (clauseCount >= 7) score += 1;
+  if (listCount >= 2) score += 1;
+
+  const actionCount = (input.match(/需要|负责|完成|产出|整理|修复|验证|设计|实现|调研|交付|恢复|推进|回收|优化|稳定|讨论|比较|制定|拆解|权衡/g) || []).length;
+  if (actionCount >= 4) score += 1;
+
+  return Math.min(score, 3);
+}
+
 /**
  * 评估领域跨度 (0-3)
  */
 function scoreDomains(input) {
   const domains = {
-    research: /调研|研究|搜索|分析/,
-    dev: /开发|编码|实现|构建/,
+    research: /调研|研究|搜索|分析|排查|比较|权衡/,
+    dev: /开发|编码|实现|构建|优化|修复|落地/,
     security: /安全|权限|审计|加固/,
-    infra: /部署|运维|配置|服务器|云/,
-    data: /数据库|存储|数据|查询/,
-    docs: /文档|说明|注释/
+    infra: /部署|运维|配置|服务器|云|恢复|推进|编排|回收|稳定性|维护性/,
+    data: /数据库|存储|数据|查询|状态/,
+    docs: /文档|说明|注释|交付|总结/,
+    planning: /方案|规划|设计|拆解|决策|路线|成本|效率/
   };
   
   let count = 0;
@@ -89,7 +119,7 @@ function scoreUncertainty(input) {
   if (/什么|哪个|如何|怎么做/.test(input)) score += 1;
   
   // 需要探索
-  if (/试试|尝试|探索|研究/.test(input)) score += 1;
+  if (/试试|尝试|探索|研究|比较|权衡|方案/.test(input)) score += 1;
   
   return Math.min(score, 3);
 }
@@ -135,14 +165,17 @@ function scoreToolLoad(input) {
 // ============================================================================
 
 function calculateScores(input, context = {}) {
-  return {
+  const scores = {
     stages: scoreStages(input),
     parallelism: scoreParallelism(input),
+    structure: scoreStructure(input),
     domains: scoreDomains(input),
     uncertainty: scoreUncertainty(input),
     risk: scoreRisk(input, context),
     tool_load: scoreToolLoad(input)
   };
+  scores.deliberation = scoreDeliberationNeed(scores);
+  return scores;
 }
 
 function totalScore(scores) {
@@ -152,9 +185,16 @@ function totalScore(scores) {
 function decide(scores) {
   const total = totalScore(scores);
 
+  if ((scores.deliberation || 0) >= 2 && scores.stages >= 2) {
+    return scores.parallelism >= 1 || scores.domains >= 2 ? 'multi' : 'light_multi';
+  }
+
   // 多阶段 + 跨领域任务不应落回 single。
   if (scores.stages >= 3 && scores.domains >= 2) {
     return scores.parallelism >= 1 ? 'multi' : 'light_multi';
+  }
+  if (scores.structure >= 2 && scores.stages >= 2) {
+    return scores.parallelism >= 1 || scores.domains >= 2 ? 'multi' : 'light_multi';
   }
   if (scores.parallelism >= 2 && scores.domains >= 2) {
     return 'multi';
@@ -171,6 +211,35 @@ function decide(scores) {
   return 'multi';
 }
 
+function buildMeetingRecommendation(scores, decision) {
+  if (decision === 'single') {
+    return {
+      enabled: false,
+      reason: 'simple-task',
+      rounds: 0
+    };
+  }
+  if ((scores.deliberation || 0) >= 2) {
+    return {
+      enabled: true,
+      reason: 'high-ambiguity-or-risk',
+      rounds: scores.risk >= 2 ? 3 : 2
+    };
+  }
+  if (scores.structure >= 2 && scores.stages >= 3) {
+    return {
+      enabled: true,
+      reason: 'multi-stage-structured-task',
+      rounds: 2
+    };
+  }
+  return {
+    enabled: false,
+    reason: 'direct-execution-sufficient',
+    rounds: 0
+  };
+}
+
 // ============================================================================
 // LLM 智能分析（可选增强）
 // ============================================================================
@@ -185,21 +254,49 @@ async function analyzeWithLLM(userInput) {
 根据以下维度评分（0-3分）：
 1. stages: 调研→设计→实现→验证→交付的阶段数
 2. parallelism: 可并行推进的子目标数
-3. domains: 跨领域数（开发/安全/运维/数据/文档等）
-4. uncertainty: 需求含糊/缺信息/需探索程度
-5. risk: 高风险动作（发布/删除/改配置）程度
-6. tool_load: 工具调用多、长流程程度
+3. structure: 任务结构复杂度（子句、交付件、职责数）
+4. domains: 跨领域数（开发/安全/运维/数据/文档等）
+5. uncertainty: 需求含糊/缺信息/需探索程度
+6. risk: 高风险动作（发布/删除/改配置）程度
+7. tool_load: 工具调用多、长流程程度
 
 阈值：总分≤6=single, 7-10=light_multi, ≥11=multi
 
 输出格式：
-{"decision":"single|light_multi|multi","total_score":数字,"stages":数字,"parallelism":数字,"domains":数字,"uncertainty":数字,"risk":数字,"tool_load":数字,"rationale":"一句话","confidence":0-1}`;
+{"decision":"single|light_multi|multi","total_score":数字,"stages":数字,"parallelism":数字,"structure":数字,"domains":数字,"uncertainty":数字,"risk":数字,"tool_load":数字,"rationale":"一句话","confidence":0-1}`;
 
   try {
     const apiKey = process.env.MINIMAX_API_KEY || 'minimax-oauth';
-    const curlCmd = `curl -s -X POST 'https://api.minimax.chat/v1/text/chatcompletion_pro' -H 'Authorization: Bearer ${apiKey}' -H 'Content-Type: application/json' -d '{"model":"MiniMax-M2.5-Highspeed","messages":[{"role":"system","content":"你是任务复杂度路由器。只输出严格JSON。"},{"role":"user","content":"${prompt.replace(/"/g, '\\"').replace(/\n/g, ' ')}"}],"temperature":0.2,"max_tokens":300}'`;
-    
-    const result = execSync(curlCmd, { encoding: 'utf8', timeout: 15000 });
+    const payload = JSON.stringify({
+      model: 'MiniMax-M2.5-Highspeed',
+      messages: [
+        { role: 'system', content: '你是任务复杂度路由器。只输出严格JSON。' },
+        { role: 'user', content: prompt }
+      ],
+      temperature: 0.2,
+      max_tokens: 300
+    });
+
+    const result = execFileSync(
+      'curl',
+      [
+        '-s',
+        '-X',
+        'POST',
+        'https://api.minimax.chat/v1/text/chatcompletion_pro',
+        '-H',
+        `Authorization: Bearer ${apiKey}`,
+        '-H',
+        'Content-Type: application/json',
+        '--data-binary',
+        '@-'
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 15000,
+        input: payload
+      }
+    );
     const response = JSON.parse(result);
     const content = response.choices?.[0]?.message?.content || '';
     
@@ -230,21 +327,25 @@ async function analyzeTask(userInput, context = {}) {
   
   if (llmResult && llmResult.confidence >= 0.7) {
     // 使用 LLM 判断（高置信度）
+    const llmScores = {
+      stages: llmResult.stages,
+      parallelism: llmResult.parallelism,
+      structure: llmResult.structure,
+      domains: llmResult.domains,
+      uncertainty: llmResult.uncertainty,
+      risk: llmResult.risk,
+      tool_load: llmResult.tool_load,
+      deliberation: scoreDeliberationNeed(llmResult)
+    };
     return {
       decision: llmResult.decision,
       total_score: llmResult.total_score,
-      score_breakdown: {
-        stages: llmResult.stages,
-        parallelism: llmResult.parallelism,
-        domains: llmResult.domains,
-        uncertainty: llmResult.uncertainty,
-        risk: llmResult.risk,
-        tool_load: llmResult.tool_load
-      },
+      score_breakdown: llmScores,
+      meeting: buildMeetingRecommendation(llmScores, llmResult.decision),
       rationale: llmResult.rationale || `LLM综合评分${llmResult.total_score}`,
-      agents: generateAgents(llmResult.decision, scores),
+      agents: generateAgents(llmResult.decision, llmScores),
       merge_plan: getMergePlan(llmResult.decision),
-      guardrails: getGuardrails(scores),
+      guardrails: getGuardrails(llmScores),
       missing_info_questions: [],
       confidence: llmResult.confidence
     };
@@ -255,6 +356,7 @@ async function analyzeTask(userInput, context = {}) {
     decision: basicDecision,
     total_score: basicTotal,
     score_breakdown: scores,
+    meeting: buildMeetingRecommendation(scores, basicDecision),
     rationale: getRationale(scores, basicDecision),
     agents: generateAgents(basicDecision, scores),
     merge_plan: getMergePlan(basicDecision),
@@ -268,6 +370,7 @@ function getRationale(scores, decision) {
   const reasons = [];
   if (scores.stages >= 2) reasons.push('多阶段');
   if (scores.parallelism >= 2) reasons.push('可并行');
+  if (scores.structure >= 2) reasons.push('结构复杂');
   if (scores.domains >= 2) reasons.push('跨领域');
   if (scores.risk >= 2) reasons.push('高风险');
   if (scores.tool_load >= 2) reasons.push('工具负载高');
@@ -282,6 +385,15 @@ function generateAgents(decision, scores) {
   
   const agents = [];
   
+  if (scores.domains >= 2 || scores.stages >= 3) {
+    agents.push({
+      role: 'Solution Architect',
+      objective: '拆解目标、规划架构和团队协作边界',
+      inputs_needed: ['任务描述', '已有约束'],
+      expected_outputs: ['执行蓝图', '接口与依赖图']
+    });
+  }
+
   if (scores.domains >= 2 || scores.stages >= 3) {
     agents.push({
       role: 'Researcher',
@@ -307,14 +419,19 @@ function generateAgents(decision, scores) {
       inputs_needed: ['实现代码', '变更内容'],
       expected_outputs: ['审查报告', '风险清单']
     });
+    agents.push({
+      role: 'Test Engineer',
+      objective: '设计验证矩阵并独立检查边缘场景',
+      inputs_needed: ['实现结果', '接口说明'],
+      expected_outputs: ['测试矩阵', '验证记录']
+    });
   }
   
-  // light_multi 限制 1 个
-  if (decision === 'light_multi' && agents.length > 1) {
-    return [agents[0]];
+  if (decision === 'light_multi') {
+    return agents.slice(0, 2);
   }
   
-  return agents.slice(0, 4);
+  return agents.slice(0, 6);
 }
 
 function getMergePlan(decision) {

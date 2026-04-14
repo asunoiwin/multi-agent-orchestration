@@ -16,6 +16,19 @@
       "lifecycle": "persistent"
     },
     {
+      "id": "solution-architect",
+      "name": "Solution Architect",
+      "purpose": "Turn ambiguous goals into executable architecture, boundaries, and delivery slices.",
+      "triggerCapabilities": ["planning", "architecture", "design", "coordination"],
+      "skills": ["read", "write", "web_search"],
+      "deny": ["gateway.*", "cron.*", "plugins.*", "sessions_spawn"],
+      "memory": {
+        "scope": "design-context",
+        "items": ["decision_records", "architecture_notes", "dependency_map"]
+      },
+      "lifecycle": "semi-persistent"
+    },
+    {
       "id": "web-researcher",
       "name": "Web Researcher",
       "purpose": "Collect references, compare options, and summarize findings.",
@@ -25,6 +38,19 @@
       "memory": {
         "scope": "research-context",
         "items": ["sources", "constraints", "decision_inputs"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "social-intel-researcher",
+      "name": "Social Intel Researcher",
+      "purpose": "Gather evidence from social media, forums, and trend surfaces, then normalize it into meeting-ready intelligence.",
+      "triggerCapabilities": ["social-intel", "social-research", "research", "analysis"],
+      "skills": ["read", "web_search", "web_fetch", "browser"],
+      "deny": ["write", "edit", "exec", "sessions_spawn"],
+      "memory": {
+        "scope": "social-intel-context",
+        "items": ["sources", "evidence_cards", "trend_notes", "credibility_flags"]
       },
       "lifecycle": "ephemeral"
     },
@@ -51,6 +77,19 @@
       "memory": {
         "scope": "quality-context",
         "items": ["review_findings", "verification_status", "risk_notes"]
+      },
+      "lifecycle": "ephemeral"
+    },
+    {
+      "id": "test-engineer",
+      "name": "Test Engineer",
+      "purpose": "Design verification matrices, run targeted checks, and stress interfaces for edge cases.",
+      "triggerCapabilities": ["verification", "testing", "audit"],
+      "skills": ["read", "exec", "write"],
+      "deny": ["sessions_spawn", "gateway.*", "cron.*", "plugins.*"],
+      "memory": {
+        "scope": "test-context",
+        "items": ["test_matrix", "check_results", "edge_cases"]
       },
       "lifecycle": "ephemeral"
     },
