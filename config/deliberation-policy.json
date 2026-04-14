@@ -2,9 +2,9 @@
   "version": "1.0.0",
   "enabled": true,
   "triggerThresholds": {
-    "score": 8,
-    "ambiguity": 2,
-    "risk": 2,
+    "score": 6,
+    "ambiguity": 1,
+    "risk": 1,
     "domains": 2,
     "structure": 2
   },

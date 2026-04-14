@@ -556,8 +556,59 @@ function supervisorRunOnce() {
   return state;
 }
 
+function loadTaskBriefs() {
+  if (!fs.existsSync(BRIEF_DIR)) return [];
+  return fs.readdirSync(BRIEF_DIR)
+    .filter(f => f.endsWith('.json'))
+    .map((f) => {
+      const file = path.join(BRIEF_DIR, f);
+      const data = readJson(file, null);
+      if (!data || typeof data !== 'object') return null;
+      return { file, data };
+    })
+    .filter(Boolean);
+}
+
 function rehydrateActiveTasks() {
-  const tasks = loadTasks();
+  let tasks = loadTasks();
+  // Fallback: if tasks/ is empty but task-briefs/ has data, reconstruct from briefs
+  if (tasks.length === 0) {
+    const briefs = loadTaskBriefs();
+    for (const brief of briefs) {
+      const taskId = brief.data.taskId;
+      if (!taskId) continue;
+      const taskFile = path.join(TASKS_DIR, `${taskId}.json`);
+      if (fs.existsSync(taskFile)) continue;
+      // Check if this task was already archived — skip if so
+      const archiveDir = path.join(TASKS_DIR, 'archive');
+      const archivedFiles = fs.existsSync(archiveDir) ? fs.readdirSync(archiveDir) : [];
+      if (archivedFiles.some(f => f.startsWith(taskId))) continue;
+      // Only reconstruct multi-agent tasks
+      if (brief.data.executionMode === 'single' || brief.data.collaborationModel === 'solo') continue;
+      const reconstructed = {
+        id: taskId,
+        task: brief.data.task,
+        status: 'planned',
+        createdAt: brief.data.generatedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        context: { taskRoot: brief.data.taskRoot },
+        plan: {
+          needsMultiAgent: true,
+          executionMode: brief.data.executionMode,
+          collaborationModel: brief.data.collaborationModel,
+          selectedRoles: brief.data.selectedRoles,
+          staffingPlan: brief.data.staffingPlan,
+          teams: brief.data.teams,
+          syncPlan: brief.data.syncPlan,
+          meetingPlan: brief.data.meetingPlan,
+          intelligencePlan: brief.data.intelligencePlan,
+          subtasks: []
+        }
+      };
+      writeJson(taskFile, reconstructed);
+    }
+    tasks = loadTasks();
+  }
   const active = readJson(ACTIVE_FILE, []);
   const handled = [];
   let changed = false;

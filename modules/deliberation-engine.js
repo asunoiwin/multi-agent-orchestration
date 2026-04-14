@@ -34,9 +34,10 @@ function shouldUseMeeting(analysis = {}, plan = null, policy = loadPolicy(), tas
   const explicitMeetingIntent = /讨论|辩论|评审|会议|圆桌|panel|约束|候选方案|推荐方案|权衡|tradeoff|方案比较|比较方案|形成推荐/i.test(String(taskText || ''));
   if (!needsMultiAgent) return false;
   if (explicitMeetingIntent) return true;
-  if (score >= Number(thresholds.score ?? 8)) return true;
-  if (ambiguity >= Number(thresholds.ambiguity ?? 2) && domains >= Number(thresholds.domains ?? 2)) return true;
-  if (risk >= Number(thresholds.risk ?? 2) && structure >= Number(thresholds.structure ?? 2)) return true;
+  if (score >= Number(thresholds.score ?? 6)) return true;
+  if (ambiguity >= Number(thresholds.ambiguity ?? 1) && domains >= Number(thresholds.domains ?? 2)) return true;
+  if (risk >= Number(thresholds.risk ?? 1) && structure >= Number(thresholds.structure ?? 2)) return true;
+  if (ambiguity + risk >= 3) return true;
   return false;
 }
 

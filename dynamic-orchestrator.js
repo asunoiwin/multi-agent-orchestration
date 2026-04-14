@@ -34,8 +34,8 @@ function detectFeatures(task) {
     socialIntel,
     maintenance: /稳定|恢复|阶段推进|推进|结果回收|回收|状态恢复|状态同步|收口|闭环|巡检|watchdog|runtime|orchestration|编排/i.test(text),
     coordination: /协调|统筹|监督|监工|跨团队|跨组|多人协作|多员工|对齐|同步会|standup|review meeting|分派/.test(text) || deliberation,
-    parallel: /同时|并行|分别|各自/.test(text),
-    serial: /先|然后|之后|接着|最后|基于|根据|再/.test(text)
+    parallel: /同时|并行|分别|各自|一边.*一边/.test(text),
+    serial: /先.*然后|先.*再|然后.*最后|接着.*再|之后.*接着|第一步.*第二步|步骤[一二三]/.test(text)
   };
 }
 
@@ -529,8 +529,18 @@ function planTask(task) {
     structure: features.serial || features.parallel ? 2 : 1,
     domains: ['research', 'planning', 'implementation', 'audit', 'documentation', 'data', 'socialIntel', 'maintenance']
       .filter((key) => features[key]).length,
-    uncertainty: /可能|也许|探索|尝试|不确定|方案/.test(task || '') ? 2 : 0,
-    risk: /重构|迁移|恢复|权限|稳定|生产|高风险/.test(task || '') ? 2 : 0,
+    uncertainty: (() => {
+      const t = task || '';
+      const high = /不确定.*方案|多个方案|探索.*可能|需要调研|未知/.test(t);
+      const mid = /可能|也许|探索|尝试|不确定|方案/.test(t);
+      return high ? 2 : mid ? 1 : 0;
+    })(),
+    risk: (() => {
+      const t = task || '';
+      const high = /生产.*迁移|高风险|不可逆|数据.*迁移|破坏性/.test(t);
+      const mid = /重构|迁移|恢复|权限|稳定|生产|高风险/.test(t);
+      return high ? 2 : mid ? 1 : 0;
+    })(),
     socialSignals: features.socialIntel ? 1 : 0
   };
   const intelligencePlan = buildIntelligencePlan(task, features, analysisLike);

@@ -316,8 +316,8 @@ function cleanupRuntime(options = {}) {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const settings = {
-    staleMinutes: options.staleMinutes ?? 90,
-    archiveCompletedMinutes: options.archiveCompletedMinutes ?? 30,
+    staleMinutes: options.staleMinutes ?? 180,
+    archiveCompletedMinutes: options.archiveCompletedMinutes ?? 60,
     orphanAllocationMinutes: options.orphanAllocationMinutes ?? 10,
     validationStaleMinutes: options.validationStaleMinutes ?? 30,
     validationArchiveCompletedMinutes: options.validationArchiveCompletedMinutes ?? 15,
